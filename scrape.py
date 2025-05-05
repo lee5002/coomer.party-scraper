@@ -565,7 +565,7 @@ if(__name__ == '__main__'):
         stdout.write(f'Full hashes will{full_hash and " " or " not "}be used\n')
         stdout.write(f'Starting offset is {start_offset}\n')
         stdout.write(f'Ending offset is {end_offset}\n')
-        stdout.write(f'Chunk size is {chunk_size} MB\n')
+        stdout.write(f'Chunk size is {CHUNK_SIZE} MB\n')
         stdout.write('---\n')
         confirmed = input('Continue to download (Y/n): ')
         if(len(confirmed) > 0 and confirmed.lower()[0] != 'y'): exit()
