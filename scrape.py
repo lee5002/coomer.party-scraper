@@ -491,9 +491,7 @@ def main(url, dst, sub, imgs, vids, start_offs, end_offs, full_hash):
 """
 Entry point to handle argument parsing
 """
-if(__name__ == '__main__'):
-    global CHUNK_SIZE
-    
+if(__name__ == '__main__'):  
     stdout.write('\n')
 
     parser = argparse.ArgumentParser(description='Coomer and Kemono scraper')
