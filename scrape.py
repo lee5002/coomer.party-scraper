@@ -9,6 +9,7 @@ import requests
 
 
 POSTS_PER_FETCH = 50
+CHUNK_SIZE = 2
 
 
 """
@@ -78,7 +79,6 @@ class CoomerThread(DownloadThread):
         is_duplicate = False
 
         # Open the temporary file
-        chunk_size = 1024 * 1024 * 2
         with open(tmp_name, 'wb') as tmp_file:
             # Download in chunks
             while(True):
@@ -87,7 +87,7 @@ class CoomerThread(DownloadThread):
                     self.status = self.DOWNLOADING
 
                     # Process every chunk
-                    for chunk in r.iter_content(chunk_size):    
+                    for chunk in r.iter_content(1024 * 1024 * CHUNK_SIZE):    
                         # Ensure hash has not been seen before if using short hash
                         if(not did_hash):
                             if(self.algo == md5):
@@ -492,6 +492,8 @@ def main(url, dst, sub, imgs, vids, start_offs, end_offs, full_hash):
 Entry point to handle argument parsing
 """
 if(__name__ == '__main__'):
+    global CHUNK_SIZE
+    
     stdout.write('\n')
 
     parser = argparse.ArgumentParser(description='Coomer and Kemono scraper')
@@ -505,6 +507,7 @@ if(__name__ == '__main__'):
     parser.add_argument('--full-hash', action='store_true', help='calculate full hash of existing files. Ideal for a low bandwidth use case, but requires more processing')
     parser.add_argument('--offset-start', type=int, default=None, dest='start', help='starting offset to begin downloading')
     parser.add_argument('--offset-end', type=int, default=None, dest='end', help='ending offset to finish downloading')
+    parser.add_argument('--chunk-size', type=int, default=2, dest='chunk_size', help='chunk size used for downloading media in MB')
 
     try:
         args = parser.parse_args()
@@ -517,6 +520,7 @@ if(__name__ == '__main__'):
         full_hash = args.full_hash
         start_offset = args.start
         end_offset = args.end
+        CHUNK_SIZE = args.chunk_size
 
     except:
         if('--help' in argv or '-h' in argv):
@@ -532,6 +536,7 @@ if(__name__ == '__main__'):
         full_hash = input('Use full hash (y/N): ')
         start_offset = input('Starting offset (optional): ')
         end_offset = input('Ending offset (optional): ')
+        chunk_size = input('Chunk size in MB (optional): ')
         img = len(img) > 0 and img.lower()[0] == 'y'
         vid = len(vid) > 0 and vid.lower()[0] == 'y'
         sub = len(sub) > 0 and sub.lower()[0] == 'y'
@@ -543,6 +548,10 @@ if(__name__ == '__main__'):
         except:
             stdout.write("Invalid start or end offset. Exiting\n\n")
             exit()
+        try:
+            CHUNK_SIZE = int(chunk_size)
+        except:
+            pass
         confirm = True
         stdout.write('\n')
 
@@ -556,6 +565,7 @@ if(__name__ == '__main__'):
         stdout.write(f'Full hashes will{full_hash and " " or " not "}be used\n')
         stdout.write(f'Starting offset is {start_offset}\n')
         stdout.write(f'Ending offset is {end_offset}\n')
+        stdout.write(f'Chunk size is {chunk_size} MB\n')
         stdout.write('---\n')
         confirmed = input('Continue to download (Y/n): ')
         if(len(confirmed) > 0 and confirmed.lower()[0] != 'y'): exit()
