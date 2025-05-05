@@ -9,7 +9,7 @@ import requests
 
 
 POSTS_PER_FETCH = 50
-CHUNK_SIZE = 2*1024*1024
+CHUNK_SIZE = 10*1024 # debian convention
 
 
 """
