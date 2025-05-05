@@ -505,7 +505,7 @@ if(__name__ == '__main__'):
     parser.add_argument('--full-hash', action='store_true', help='calculate full hash of existing files. Ideal for a low bandwidth use case, but requires more processing')
     parser.add_argument('--offset-start', type=int, default=None, dest='start', help='starting offset to begin downloading')
     parser.add_argument('--offset-end', type=int, default=None, dest='end', help='ending offset to finish downloading')
-    parser.add_argument('--chunk-size', type=int, default=None, dest='chunk_size', help='chunk size used for downloading media in bytes')
+    parser.add_argument('--chunk-size', type=int, default=CHUNK_SIZE, dest='chunk_size', help='chunk size used for downloading media in bytes')
 
     try:
         args = parser.parse_args()
