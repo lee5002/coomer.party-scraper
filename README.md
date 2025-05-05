@@ -28,7 +28,7 @@ In its current state, this scraper requires the requests package. You can instal
 
 ```
 usage: scrape.py [-h] [--out OUT] [--sub-folders] [--skip-vids] [--skip-imgs] [--confirm]
-                 [--full-hash] [--offset-start START] [--offset-end END]
+                 [--full-hash] [--offset-start START] [--offset-end END] [--chunk-size SIZE]
                  url
 
 Coomer and Kemono scraper
@@ -47,6 +47,7 @@ optional arguments:
                         bandwidth use case, but requires more processing
   --offset-start START  starting offset to begin downloading
   --offset-end END      ending offset to finish downloading
+  --chunk-size SIZE     chunk size used for downloading media in MB
 ```
 
 The URL can be a page for an artist, a post from an artist, or a single media file. The starting and ending offsets are only respected when downloading from a page.
