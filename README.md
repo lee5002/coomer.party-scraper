@@ -47,7 +47,7 @@ optional arguments:
                         bandwidth use case, but requires more processing
   --offset-start START  starting offset to begin downloading
   --offset-end END      ending offset to finish downloading
-  --chunk-size SIZE     chunk size used for downloading media in MB
+  --chunk-size SIZE     chunk size used for downloading media in bytes
 ```
 
 The URL can be a page for an artist, a post from an artist, or a single media file. The starting and ending offsets are only respected when downloading from a page.
