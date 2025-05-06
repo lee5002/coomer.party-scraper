@@ -49,10 +49,18 @@ class CoomerThread(DownloadThread):
             time.sleep(THROTTLE_TIME)
 
     # Safely make a streamed connection
-    def establish_stream(self, start=-1):
+    def establish_stream(self, start=None):
         while(True):
             try:
-                headers = { 'Range': f'bytes={start}-' } if start > 0 else {}
+                headers = {
+                "authority": "www.google.com",
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "accept-language": "en-US,en;q=0.9",
+                "cache-control": "max-age=0",
+                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+                }
+                if start: 
+                    headers['Range'] = f'bytes={start}-'
                 r = requests.get(self.url, headers=headers, stream=True, allow_redirects=True, timeout=TIMEOUT)
                 r.raise_for_status()
                 
@@ -227,6 +235,7 @@ def fetch_posts(base, service, creator, offset=None):
     while(True):
         try:
             res = requests.get(api_url, headers={'accept': 'application/json'})
+            res.raise_for_status()
         except:
             if(res.status_code == 429 or res.status_code == 403): time.sleep(THROTTLE_TIME)
             else: break
@@ -249,11 +258,15 @@ Get the creator name.
 @return a name and service of the creator
 """
 def get_creator_name(base, service, creator):
+    if service == 'onlyfans':
+        return f'{creator}_{service}'
+    
     api_url = f'{base}/api/v1/{service}/user/{creator}/profile'
 
     while(True):
         try:
             res = requests.get(api_url, headers={'accept': 'application/json'})
+            res.raise_for_status()
         except:
             if(res.status_code == 429 or res.status_code == 403): time.sleep(THROTTLE_TIME)
             else: break
@@ -263,9 +276,9 @@ def get_creator_name(base, service, creator):
     if(res.status_code != 200):
         stdout.write(f'[get_creator_name] ERROR: Failed to fetch using API ({api_url})\n')
         stdout.write(f'[get_creator_name] ERROR: Status code: {res.status_code}\n')
-        return f'{creator}_{service}'
+        return None
 
-    return f'{res.json()['name']}_{service}'
+    return f'{res.json()["name"]}_{service}'
 
 
 """
@@ -336,6 +349,8 @@ def process_post(url, dst, sub, imgs, vids, full_hash):
 
     if sub:
         creator_name = get_creator_name(base_url, url_sections[-3], url_sections[-1])
+        if not creator_name:
+            return
         dst = os.path.join(dst, creator_name)
         stdout.write(f'[process_post] INFO: Start processing creator {creator_name}.\n')
     else:        
@@ -344,10 +359,19 @@ def process_post(url, dst, sub, imgs, vids, full_hash):
     # Get the JSON of the post
     stdout.write(f'\n[process_post] INFO: Converting post to JSON.\n')
     api_url = url.replace(base_url, f'{base_url}/api/v1')
-    try:
-        res = requests.get(api_url, headers={'accept': 'application/json'})
-    except:
+    while(True):
+        try:
+            res = requests.get(api_url, headers={'accept': 'application/json'})
+            res.raise_for_status()
+        except:
+            if(res.status_code == 429 or res.status_code == 403): time.sleep(THROTTLE_TIME)
+            else: break
+        else:
+            break
+    
+    if(res.status_code != 200):    
         stdout.write(f'[process_post] ERROR: Failed to fetch using API ({api_url})\n')
+        stdout.write(f'[process_post] ERROR: Status code: {res.status_code}\n')
         return
     post = [res.json()]
 
@@ -378,6 +402,8 @@ def process_page(url, dst, sub, imgs, vids, start_offs, end_offs, full_hash):
 
     if sub:
         creator_name = get_creator_name(base_url, url_sections[-3], url_sections[-1])
+        if not creator_name:
+            return
         dst = os.path.join(dst, creator_name)
         stdout.write(f'[process_page] INFO: Start processing creator {creator_name}.\n')
     else:        
