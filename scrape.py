@@ -1,4 +1,4 @@
-from scraping_utils.scraping_utils import compute_file_hashes, DownloadThread, multithread_download_urls_special, IMG_EXTS, VID_EXTS, TOO_MANY_REQUESTS, NOT_FOUND, CONNECTION_RESET, THROTTLE_TIME
+from scraping_utils.scraping_utils import compute_file_hashes, DownloadThread, multithread_download_urls_special, IMG_EXTS, VID_EXTS, TOO_MANY_REQUESTS, NOT_FOUND, CONNECTION_RESET
 from sys import stderr, stdout, argv, maxsize
 from hashlib import md5, sha256
 import argparse
@@ -10,7 +10,8 @@ import requests
 
 POSTS_PER_FETCH = 50
 CHUNK_SIZE = 10*1024 # debian convention
-
+TIMEOUT = 30
+THROTTLE_TIME = 2
 
 """
 A class to download a Coomer URL to a directory on a separate thread.
@@ -52,7 +53,7 @@ class CoomerThread(DownloadThread):
         while(True):
             try:
                 headers = { 'Range': f'bytes={start}-' } if start > 0 else {}
-                r = requests.get(self.url, headers=headers, stream=True, allow_redirects=True)
+                r = requests.get(self.url, headers=headers, stream=True, allow_redirects=True, timeout=TIMEOUT)
                 r.raise_for_status()
                 
                 # Return the streamed connection
@@ -79,7 +80,7 @@ class CoomerThread(DownloadThread):
         is_duplicate = False
 
         # Open the temporary file
-        with open(tmp_name, 'wb') as tmp_file:
+        with open(tmp_name, 'wb+') as tmp_file:
             # Download in chunks
             while(True):
                 try:
@@ -88,11 +89,18 @@ class CoomerThread(DownloadThread):
 
                     # Process every chunk
                     for chunk in r.iter_content(CHUNK_SIZE):    
-                        # Ensure hash has not been seen before if using short hash
-                        if(not did_hash):
+                        self.status = self.DOWNLOADING
+                        tmp_file.write(chunk)
+                        self.downloaded += len(chunk)
+
+                        # Ensure hash has not been seen before if using short hash                           
+                        if(not did_hash and (self.downloaded >= 1024*64 or self.total_size >= self.downloaded):
                             if(self.algo == md5):
                                 self.status = self.HASHING
-                                hash = self.algo(chunk[:1024*64]).hexdigest()
+                                tmp_file.seek(0) # Move file pointer to start of file
+                                hash_buffer = tmp_file.read(1024*64)
+                                tmp_file.seek(0, 2) # Move file pointer to end of file to continue writing there
+                                hash = self.algo(hash_buffer).hexdigest()
                                 if(hash in self.hashes):
                                     is_duplicate = True
                                     break
@@ -100,10 +108,6 @@ class CoomerThread(DownloadThread):
                             else:
                                 self.hashes[len(self.hashes)] = self.name
                             did_hash = True
-
-                        self.status = self.DOWNLOADING
-                        tmp_file.write(chunk)
-                        self.downloaded += len(chunk)
                 
                 except Exception as e:
                     if(r.status_code == NOT_FOUND):
@@ -497,15 +501,17 @@ if(__name__ == '__main__'):
     parser = argparse.ArgumentParser(description='Coomer and Kemono scraper')
     parser.exit_on_error = False
     parser.add_argument('url', type=str, nargs='+', help='coomer or kemono URL or multiple URLs to scrape media from')
-    parser.add_argument('--out', '-o', type=str, default='./out', help='download destination (default: ./out)')
-    parser.add_argument('--sub-folders', action='store_true', help='create subfolders for creators when downloading full pages or posts')
-    parser.add_argument('--skip-vids', action='store_true', help='skip video downloads')
-    parser.add_argument('--skip-imgs', action='store_true', help='skip image downloads')
-    parser.add_argument('--confirm', '-c', action='store_true', help='confirm arguments before proceeding')
-    parser.add_argument('--full-hash', action='store_true', help='calculate full hash of existing files. Ideal for a low bandwidth use case, but requires more processing')
-    parser.add_argument('--offset-start', type=int, default=None, dest='start', help='starting offset to begin downloading')
-    parser.add_argument('--offset-end', type=int, default=None, dest='end', help='ending offset to finish downloading')
-    parser.add_argument('--chunk-size', type=int, default=CHUNK_SIZE, dest='chunk_size', help='chunk size used for downloading media in bytes')
+    parser.add_argument('--out', '-o', type=str, default=os.environ.get('OUT','./out'), help='download destination (default: ./out)')
+    parser.add_argument('--sub-folders', action='store_false' if os.environ.get('SUB_FOLDERS', False) else 'store_true', help='create subfolders for creators when downloading full pages or posts')
+    parser.add_argument('--skip-vids', action='store_false' if os.environ.get('SKIP_VIDS', False) else 'store_true', help='skip video downloads')
+    parser.add_argument('--skip-imgs', action='store_false' if os.environ.get('SKIP_IMGS', False) else 'store_true', help='skip image downloads')
+    parser.add_argument('--confirm', '-c', action='store_false' if os.environ.get('CONFIRM', False) else 'store_true', help='confirm arguments before proceeding')
+    parser.add_argument('--full-hash', action='store_false' if os.environ.get('FULL_HASH', False) else 'store_true', help='calculate full hash of existing files. Ideal for a low bandwidth use case, but requires more processing')
+    parser.add_argument('--offset-start', type=int, default=os.environ.get('OFFSET_START',None), dest='start', help='starting offset to begin downloading')
+    parser.add_argument('--offset-end', type=int, default=os.environ.get('OFFSET_END',None), dest='end', help='ending offset to finish downloading')
+    parser.add_argument('--chunk-size', type=int, default=os.environ.get('CHUNK_SIZE',CHUNK_SIZE), dest='chunk_size', help='chunk size used for downloading media in bytes')
+    parser.add_argument('--timeout', type=int, default=os.environ.get('TIMEOUT',TIMEOUT), dest='timeout', help='timeout for downloading media in s. If timeout is elapsed, the download throttles and retries after throttle_time')
+    parser.add_argument('--throttle-time', type=int, default=os.environ.get('THROTTLE_TIME',THROTTLE_TIME), dest='throttle_time', help='delay until download gets resumed after failure in s')
 
     try:
         args = parser.parse_args()
@@ -519,6 +525,8 @@ if(__name__ == '__main__'):
         start_offset = args.start
         end_offset = args.end
         CHUNK_SIZE = args.chunk_size
+        TIMEOUT = args.timeout
+        THROTTLE_TIME = args.throttle_time
 
     except:
         if('--help' in argv or '-h' in argv):
@@ -535,6 +543,8 @@ if(__name__ == '__main__'):
         start_offset = input('Starting offset (optional): ')
         end_offset = input('Ending offset (optional): ')
         chunk_size = input('Chunk size in bytes (optional): ')
+        timeout = input('Timeout in s (optional): ')
+        throttle_time = input('Throttle time in s (optional): ')
         img = len(img) > 0 and img.lower()[0] == 'y'
         vid = len(vid) > 0 and vid.lower()[0] == 'y'
         sub = len(sub) > 0 and sub.lower()[0] == 'y'
@@ -548,6 +558,14 @@ if(__name__ == '__main__'):
             exit()
         try:
             CHUNK_SIZE = int(chunk_size)
+        except:
+            pass
+        try:
+            TIMEOUT = int(timeout)
+        except:
+            pass
+        try:
+            THROTTLE_TIME = int(throttle_time)
         except:
             pass
         confirm = True
@@ -564,6 +582,8 @@ if(__name__ == '__main__'):
         stdout.write(f'Starting offset is {start_offset}\n')
         stdout.write(f'Ending offset is {end_offset}\n')
         stdout.write(f'Chunk size is {CHUNK_SIZE} bytes\n')
+        stdout.write(f'Timeout is {TIMEOUT} s\n')
+        stdout.write(f'Throttle time is {THROTTLE_TIME} s\n')
         stdout.write('---\n')
         confirmed = input('Continue to download (Y/n): ')
         if(len(confirmed) > 0 and confirmed.lower()[0] != 'y'): exit()
