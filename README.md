@@ -28,26 +28,29 @@ In its current state, this scraper requires the requests package. You can instal
 
 ```
 usage: scrape.py [-h] [--out OUT] [--sub-folders] [--skip-vids] [--skip-imgs] [--confirm]
-                 [--full-hash] [--offset-start START] [--offset-end END] [--chunk-size SIZE]
+                 [--full-hash] [--offset-start START] [--offset-end END] [--chunk-size CHUNK_SIZE]
+                 [--timeout TIMEOUT] [--throttle-time THROTTLE_TIME]
                  url
 
 Coomer and Kemono scraper
 
 positional arguments:
-  url                   coomer or kemono URL or multiple URLs to scrape media from
+  url                             coomer or kemono URL or multiple URLs to scrape media from
 
 optional arguments:
-  -h, --help            show this help message and exit
-  --out OUT, -o OUT     download destination (default: ./out)
-  --sub-folders		create subfolders for creators when downloading full pages or posts
-  --skip-vids           skip video downloads
-  --skip-imgs           skip image downloads
-  --confirm, -c         confirm arguments before proceeding
-  --full-hash           calculate full hash of existing files. Ideal for a low
-                        bandwidth use case, but requires more processing
-  --offset-start START  starting offset to begin downloading
-  --offset-end END      ending offset to finish downloading
-  --chunk-size SIZE     chunk size used for downloading media in bytes
+  -h, --help                      show this help message and exit
+  --out OUT, -o OUT               download destination (default: ./out)
+  --sub-folders		                create subfolders for creators when downloading full pages or posts
+  --skip-vids                     skip video downloads
+  --skip-imgs                     skip image downloads
+  --confirm, -c                   confirm arguments before proceeding
+  --full-hash                     calculate full hash of existing files. Ideal for a low
+                                  bandwidth use case, but requires more processing
+  --offset-start START            starting offset to begin downloading
+  --offset-end END                ending offset to finish downloading
+  --chunk-size SIZE               chunk size used for downloading media in bytes
+  --timeout TIMEOUT               timeout for downloading media in s. If timeout is elapsed, the download throttles and retries after throttle_time
+  --throttle-time THROTTLE_TIME   delay until download gets resumed after failure in s
 ```
 
 The URL can be a page for an artist, a post from an artist, or a single media file. The starting and ending offsets are only respected when downloading from a page.
