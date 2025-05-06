@@ -94,7 +94,7 @@ class CoomerThread(DownloadThread):
                         self.downloaded += len(chunk)
 
                         # Ensure hash has not been seen before if using short hash                           
-                        if(not did_hash and (self.downloaded >= 1024*64 or self.total_size >= self.downloaded):
+                        if(not did_hash and (self.downloaded >= 1024*64 or self.total_size >= self.downloaded)):
                             if(self.algo == md5):
                                 self.status = self.HASHING
                                 tmp_file.seek(0) # Move file pointer to start of file
