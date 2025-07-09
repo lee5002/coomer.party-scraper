@@ -69,7 +69,7 @@ class CoomerThread(DownloadThread):
                 # Return the streamed connection
                 return r
             except:
-                self.()
+                self.throttle()
                 if self.fail_count > 10:
                     return None
     
@@ -246,7 +246,7 @@ def fetch_posts(base, service, creator, offset=None):
             res = requests.get(api_url, headers={'accept': 'application/json'})
             res.raise_for_status()
         except:
-            if(res.status_code == 429 or res.status_code == 403): time.sleep(_TIME)
+            if(res.status_code == 429 or res.status_code == 403): time.sleep(THROTTLE_TIME)
             else: break
         else:
             break
