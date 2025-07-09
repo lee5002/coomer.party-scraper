@@ -29,6 +29,7 @@ class CoomerThread(DownloadThread):
         self.base = url
         self.server = 1
         self.coomit()
+        self.fail_count = 0
 
     # Update the coom server URL from the base URL
     def coomit(self):
@@ -46,6 +47,7 @@ class CoomerThread(DownloadThread):
         self.status = self.STANDBY
         self.coomit()
         if(self.server == 1):
+            self.fail_count += 1
             time.sleep(THROTTLE_TIME)
 
     # Safely make a streamed connection
@@ -67,7 +69,9 @@ class CoomerThread(DownloadThread):
                 # Return the streamed connection
                 return r
             except:
-                self.throttle()
+                self.()
+                if self.fail_count > 10:
+                    return None
     
     # Perform downloading until successful, switching coom servers as "too many requests" responses are received
     def run(self):
@@ -78,6 +82,8 @@ class CoomerThread(DownloadThread):
         # Establish the streamed connection
         self.status = self.CONNECTING
         r = self.establish_stream()
+        if r == None:
+            return
 
         # Get total content size of file
         self.total_size = int(r.headers.get("content-length", 1))
@@ -123,6 +129,9 @@ class CoomerThread(DownloadThread):
                         break
                     r.close()
                     r = self.establish_stream(start=self.downloaded)
+                    if r == None:
+                        self.status = self.ERROR
+                        break
 
                 # download is successful or duplicate hash was found
                 else:
@@ -237,7 +246,7 @@ def fetch_posts(base, service, creator, offset=None):
             res = requests.get(api_url, headers={'accept': 'application/json'})
             res.raise_for_status()
         except:
-            if(res.status_code == 429 or res.status_code == 403): time.sleep(THROTTLE_TIME)
+            if(res.status_code == 429 or res.status_code == 403): time.sleep(_TIME)
             else: break
         else:
             break
