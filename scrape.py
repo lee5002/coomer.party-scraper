@@ -70,7 +70,7 @@ class CoomerThread(DownloadThread):
                 return r
             except:
                 self.throttle()
-                if self.fail_count > 10:
+                if self.fail_count > 100:
                     return None
     
     # Perform downloading until successful, switching coom servers as "too many requests" responses are received
@@ -106,6 +106,7 @@ class CoomerThread(DownloadThread):
                         self.status = self.DOWNLOADING
                         tmp_file.write(chunk)
                         self.downloaded += len(chunk)
+                        self.fail_count = 0
 
                         # Ensure hash has not been seen before if using short hash                           
                         if(not did_hash and (self.downloaded >= 1024*64 or self.total_size >= self.downloaded)):
