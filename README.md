@@ -29,8 +29,8 @@ In its current state, this scraper requires the requests package. You can instal
 ```
 usage: scrape.py [-h] [--out OUT] [--sub-folders] [--skip-vids] [--skip-imgs] [--confirm]
                  [--full-hash] [--offset-start START] [--offset-end END] [--chunk-size CHUNK_SIZE]
-                 [--timeout TIMEOUT] [--throttle-time THROTTLE_TIME]
-                 url
+                 [--timeout TIMEOUT] [--throttle-time THROTTLE_TIME] [--dump-urls]
+                 url [url ...]
 
 Coomer and Kemono scraper
 
@@ -51,6 +51,7 @@ optional arguments:
   --chunk-size SIZE               chunk size used for downloading media in bytes
   --timeout TIMEOUT               timeout for downloading media in s. If timeout is elapsed, the download throttles and retries after throttle_time
   --throttle-time THROTTLE_TIME   delay until download gets resumed after failure in s
+  --dump-urls           print the urls to a text file instead of downloading
 ```
 
 The URL can be a page for an artist, a post from an artist, or a single media file. The starting and ending offsets are only respected when downloading from a page.
@@ -72,7 +73,7 @@ services:
 
 ## A Note on Scraping
 
-This version is confirmed to work as of December 3, 2024. This approach uses the API when possible, which increases the reliability that it will continue to work in the future. Nevertheless, if you encounter any problems, please open an issue.
+This version is confirmed to work as of September 12, 2025. This approach uses the API when possible, which increases the reliability that it will continue to work in the future. Nevertheless, if you encounter any problems, please open an issue.
 
 ## Disclaimer
 
@@ -80,10 +81,4 @@ The website that this scraper targets is known to host media that is taken from 
 
 ## Donate
 
-If you enjoy this project and want to support its continued development, you can buy me a coffee with Bitcoin :)
-
-```
-bc1q7fea7t5twypa4d2vg63qqw7a2tz9e3h2ke95wp
-```
-
-![bitcoin QR code](./img/bitcoin_qr_code.png)
+If you enjoy this project and want to support its continued development, feel free to contribute and open pull requests for approval :)
