@@ -169,7 +169,7 @@ def su_base_from_url(url):
     host = host[4:] if host.startswith('www.') else host
     labels = host.split('.') if host else []
     sld = labels[-2] if len(labels) >= 2 else (labels[0] if labels else 'coomer')
-    return f'https://www.{sld}.su'
+    return f'https://www.{sld}.st'
 
 
 """
