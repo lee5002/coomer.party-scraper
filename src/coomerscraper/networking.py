@@ -49,8 +49,9 @@ Download a single URL, cycling through random load-balancing servers.
 - dst: Destination of the URL.
 - slot: Position in the progress rendering
 - q: The queue that this job belongs to
+- retries: Number of retries per media file
 """
-def _download( url: NamedUrl, dst: Path, slot: int, q: queue.Queue ) -> None:
+def _download( url: NamedUrl, dst: Path, slot: int, q: queue.Queue, retries: int ) -> None:
     server_ident = randrange(4) + 1
     static_url = url.url[10:]
     tmp = dst.with_suffix(dst.suffix + '.part')
@@ -91,7 +92,7 @@ def _download( url: NamedUrl, dst: Path, slot: int, q: queue.Queue ) -> None:
         except (requests.RequestException, requests.exceptions.ReadTimeout):
             q.put(_ProgressUpdate(slot, done, total, url.name, server_ident, paused=True))
             errcnt += 1
-            if errcnt < 200:
+            if retries is None or errcnt < retries:
                 time.sleep(THROTTLE_TIME)
                 server_ident = randrange(3) + 1
                 continue
@@ -183,6 +184,7 @@ Download a list of NamedUrl using multithreading, checking for duplicates.
 - dst_pics: Path to download pictures to.
 - dst_vids: Path to download videos to.
 - workers: Maximum number of threads to use for downloading.
+- retries: Number of retries per media file
 Returns the number of unique downloads successfully performed.
 """
 def multithread_download( urls: List[NamedUrl]
@@ -190,6 +192,7 @@ def multithread_download( urls: List[NamedUrl]
                         , dst_vids: Path
                         , hashes: dict[bytes, Path] = {}
                         , workers: int = 8
+                        , retries: int = None
                         ) -> dict[bytes, Path]:
     q: queue.Queue = queue.Queue()
     url_iter = iter(urls)
@@ -207,7 +210,7 @@ def multithread_download( urls: List[NamedUrl]
             try:
                 next_url = next(url_iter)
                 dst = (dst_pics if next_url.url.split('.')[-1] in IMG_EXTS else dst_vids) / next_url.name
-                pool.submit(_download, next_url, dst, slot, q)
+                pool.submit(_download, next_url, dst, slot, q, retries)
                 return True
             except StopIteration:
                 return False

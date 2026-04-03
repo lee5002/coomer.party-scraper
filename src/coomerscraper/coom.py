@@ -215,6 +215,7 @@ Driver function to download media from Coomer or Kemono
 - offsets: Post offsets to start from and end at when downloading a page.
 - dump_urls: If URLs should be dumped instead of downloaded from.
 - jobs: Maximum number of threads to perform downloads, one thread per download.
+- retries: Number of retries per media file
 """
 def main( urls: List[str]
         , dst: Path
@@ -222,7 +223,8 @@ def main( urls: List[str]
         , skip_vid: bool
         , offsets: Tuple[Optional[int], Optional[int]]
         , dump_urls: bool
-        , jobs: int) -> None:
+        , jobs: int
+        , retries: int) -> None:
 
     # Loop through the URLs to get more URLs
     for url in urls:
@@ -277,6 +279,6 @@ def main( urls: List[str]
         dst_pics = dst_root / 'pics'
         dst_vids = dst_root / 'vids'
         logger.info(f'Downloading to {dst / user}')
-        multithread_download(named_urls, dst_pics, dst_vids, workers=jobs)
+        multithread_download(named_urls, dst_pics, dst_vids, workers=jobs, retries=retries)
 
     return
