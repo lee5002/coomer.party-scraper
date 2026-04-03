@@ -55,6 +55,7 @@ def _download( url: NamedUrl, dst: Path, slot: int, q: queue.Queue ) -> None:
     static_url = url.url[10:]
     tmp = dst.with_suffix(dst.suffix + '.part')
     total = None
+    errcnt = 0
 
     while True:
         headers = { 'Connection': 'close' }
@@ -81,6 +82,7 @@ def _download( url: NamedUrl, dst: Path, slot: int, q: queue.Queue ) -> None:
                     for chunk in res.iter_content(chunk_size=CHUNK_SIZE):
                         if not chunk:
                             continue
+                        errcnt = 0
                         f.write(chunk)
                         done += len(chunk)
                         q.put(_ProgressUpdate(slot, done, total, url.name, server_ident))
@@ -88,13 +90,14 @@ def _download( url: NamedUrl, dst: Path, slot: int, q: queue.Queue ) -> None:
 
         except (requests.RequestException, requests.exceptions.ReadTimeout):
             q.put(_ProgressUpdate(slot, done, total, url.name, server_ident, paused=True))
-            time.sleep(THROTTLE_TIME)
-            server_ident = randrange(3) + 1
-            q.put(_ProgressUpdate(slot, done, total, url.name, server_ident))
-
-        else:
-            q.put(_ProgressUpdate(slot, done, total, url.name, server_ident, finished=True))
-            return
+            errcnt += 1
+            if errcnt < 200:
+                time.sleep(THROTTLE_TIME)
+                server_ident = randrange(3) + 1
+                continue
+        
+        q.put(_ProgressUpdate(slot, done, total, url.name, server_ident, finished=True))
+        return
 
 
 """
