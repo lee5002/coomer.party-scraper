@@ -5,6 +5,8 @@ from sys import maxsize
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 
+import requests
+
 from .networking import ( api_fetch_post_multi, api_fetch_post_single, api_fetch_creator_profile
                         , multithread_download, NamedUrl, IMG_EXTS, VID_EXTS )
 from .utils import base_url, compute_file_hashes, create_folder_tree, round_offsets, to_camel
@@ -13,6 +15,42 @@ from .utils import base_url, compute_file_hashes, create_folder_tree, round_offs
 POSTS_PER_FETCH = 50
 
 logger = logging.getLogger(__name__)
+
+
+def parse_media_urls_from_html(url: str) -> List[NamedUrl]:
+    try:
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=20)
+        res.raise_for_status()
+    except Exception as exc:
+        logger.warning(f'Failed to fetch HTML for {url}: {exc}')
+        return []
+
+    seen = set()
+    named_urls = []
+    for candidate in re.findall(r'(?:src|href|data-src|poster)=["\']([^"\']+)["\']', res.text, flags=re.I):
+        if not candidate:
+            continue
+        if candidate.startswith('//'):
+            candidate = 'https:' + candidate
+        elif candidate.startswith('/'):
+            candidate = f'https://coomerfans.com{candidate}'
+        elif '://' not in candidate:
+            candidate = 'https://coomerfans.com/' + candidate.lstrip('/')
+
+        candidate = candidate.split('?', 1)[0]
+        if 'coomerfans.com' not in candidate.lower() and 'coomerfans.com' not in url.lower():
+            continue
+        if '/storage/' not in candidate.lower() or '/istorage/' in candidate.lower():
+            continue
+
+        ext = Path(candidate).suffix.lower().lstrip('.')
+        if ext not in IMG_EXTS and ext not in VID_EXTS:
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        named_urls.append(NamedUrl(candidate, Path(candidate).name))
+    return named_urls
 
 
 def parse_creator_identity(url: str) -> Tuple[str, Optional[str], str]:
@@ -123,6 +161,11 @@ def process_post( url: str
     post_id = segments[-1]
     creator_key = creator_id or creator
 
+    if 'coomerfans.com' in base:
+        named_urls = parse_media_urls_from_html(url)
+        if named_urls:
+            return [nu for nu in named_urls if not ((nu.url.split('.')[-1].lower() in IMG_EXTS and skip_img) or (nu.url.split('.')[-1].lower() in VID_EXTS and skip_vid))]
+
     # Get the JSON version of the post
     post = [ api_fetch_post_single(base, service, creator_key, post_id)['post'] ]
 
@@ -158,6 +201,11 @@ def process_page( url: str
     base = base_url(url)
     service, creator_id, creator = parse_creator_identity(url)
     creator_key = creator_id or creator
+
+    if 'coomerfans.com' in base:
+        named_urls = parse_media_urls_from_html(url)
+        if named_urls:
+            return [nu for nu in named_urls if not ((nu.url.split('.')[-1].lower() in IMG_EXTS and skip_img) or (nu.url.split('.')[-1].lower() in VID_EXTS and skip_vid))]
 
     # Round the offsets
     rounded_offsets = round_offsets(offsets, POSTS_PER_FETCH)
