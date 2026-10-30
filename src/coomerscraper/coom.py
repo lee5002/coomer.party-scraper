@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 from sys import maxsize
 from typing import List, Optional, Tuple
+from urllib.parse import urlparse
 
 from .networking import ( api_fetch_post_multi, api_fetch_post_single, api_fetch_creator_profile
                         , multithread_download, NamedUrl, IMG_EXTS, VID_EXTS )
@@ -12,6 +13,30 @@ from .utils import base_url, compute_file_hashes, create_folder_tree, round_offs
 POSTS_PER_FETCH = 50
 
 logger = logging.getLogger(__name__)
+
+
+def parse_creator_identity(url: str) -> Tuple[str, Optional[str], str]:
+    segments = [segment for segment in urlparse(url).path.split('/') if segment]
+    if not segments:
+        return '', None, ''
+
+    if segments[0] == 'u' and len(segments) >= 4:
+        return segments[1], segments[2], segments[3]
+
+    if len(segments) >= 3 and segments[-2] == 'user':
+        return segments[-3], None, segments[-1]
+
+    if len(segments) >= 2 and segments[-2] == 'post':
+        if segments[0] == 'u' and len(segments) >= 5:
+            return segments[1], segments[2], segments[3]
+        return segments[-5], None, segments[-3]
+
+    if len(segments) >= 2 and segments[-1] == 'post':
+        if segments[0] == 'u' and len(segments) >= 4:
+            return segments[1], segments[2], segments[3]
+        return segments[0], None, segments[-1]
+
+    return segments[0], None, segments[-1] if len(segments) > 1 else ''
 
 
 """
@@ -92,13 +117,14 @@ def process_post( url: str
                 , skip_vid: bool ) -> List[NamedUrl]:
     # Get the SLD and TLD of the URL
     base = base_url(url)
-    segments = url.split('/')
-    service = segments[-5]
-    creator = segments[-3]
+    path = urlparse(url).path
+    segments = [segment for segment in path.split('/') if segment]
+    service, creator_id, creator = parse_creator_identity(url)
     post_id = segments[-1]
+    creator_key = creator_id or creator
 
     # Get the JSON version of the post
-    post = [ api_fetch_post_single(base, service, creator, post_id)['post'] ]
+    post = [ api_fetch_post_single(base, service, creator_key, post_id)['post'] ]
 
     # Parse the media URLs from the post
     logger.info('Parsing media URLs from 1 post')
@@ -130,9 +156,8 @@ def process_page( url: str
                 , offsets: Tuple[Optional[int], Optional[int]] ) -> List[NamedUrl]:
     # Get the SLD and TLD of the URL
     base = base_url(url)
-    segments = url.split('/')
-    service = segments[-3]
-    creator = segments[-1]
+    service, creator_id, creator = parse_creator_identity(url)
+    creator_key = creator_id or creator
 
     # Round the offsets
     rounded_offsets = round_offsets(offsets, POSTS_PER_FETCH)
@@ -142,7 +167,7 @@ def process_page( url: str
     offset = rounded_offsets[0]
     while True:
         logger.info(f'Fetching posts {offset + 1} - {offset + POSTS_PER_FETCH}')
-        curr_posts = api_fetch_post_multi(base, service, creator, offset)
+        curr_posts = api_fetch_post_multi(base, service, creator_key, offset)
         all_posts += curr_posts
         offset += POSTS_PER_FETCH
         if len(curr_posts) % POSTS_PER_FETCH != 0 or len(curr_posts) == 0 or offset >= rounded_offsets[1]:
@@ -176,7 +201,7 @@ Get creator name as string. Some services only use integer IDs which can be
 replaced by clear names using this function.
 Returns creator name as string
 """
-def get_creator_name(base: str, service: str, creator: str) -> List[NamedUrl]:
+def get_creator_name(base: str, service: str, creator: str) -> str:
     profile = api_fetch_creator_profile(base, service, creator)
     if profile:
         return f'{profile["name"]}_{service}'
@@ -230,23 +255,24 @@ def main( urls: List[str]
     for url in urls:
         logger.info(f'Parsing argument-provided URL "{url}"')
 
-        # Split the URL on the separator
-        segments = url.split('/')
-        if len(segments) < 4:
+        path_segments = [segment for segment in urlparse(url).path.split('/') if segment]
+        if len(path_segments) < 2:
             logger.error('The URL is malformed')
             return
         user = None
+        service, creator_id, creator = parse_creator_identity(url)
+        creator_key = creator_id or creator
 
         # Fetch URLs to download media from a post
-        if segments[-2] == 'post':
+        if len(path_segments) >= 2 and path_segments[-2] == 'post':
             logger.debug('URL is suspected to be a post')
             if offsets[0] is not None or offsets[1] is not None:
                 logger.warning('Start and end offsets are ignored when downloading a post')
-            user = get_creator_name(base_url(url), segments[-5], segments[-3])
+            user = get_creator_name(base_url(url), service, creator_key)
             named_urls = process_post(url, skip_img, skip_vid)
 
         # Fetch URLs to download media from pre-fetched media
-        elif segments[-4] == 'data':
+        elif 'data' in path_segments:
             logger.debug('URL is suspected to be pre-fetched media')
             if offsets[0] is not None or offsets[1] is not None:
                 logger.warning('Start and end offsets are ignored when downloading pre-fetched media')
@@ -257,7 +283,7 @@ def main( urls: List[str]
         # Fetch URLs to download media from a page
         else:
             logger.debug('URL is suspected to be a page')
-            user = get_creator_name(base_url(url), segments[-3], segments[-1])
+            user = get_creator_name(base_url(url), service, creator_key)
             named_urls = process_page(url, skip_img, skip_vid, offsets)
 
         # Remove URLs of files that already exist
