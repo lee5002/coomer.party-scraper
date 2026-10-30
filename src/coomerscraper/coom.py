@@ -105,22 +105,30 @@ def resolve_legacy_to_coomerfans(url: str) -> str:
     if not lookup:
         return url
 
-    search_url = f'https://coomerfans.com/?q={quote_plus(lookup)}'
-    try:
-        res = requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=20)
-        res.raise_for_status()
-    except Exception as exc:
-        logger.warning(f'Failed to resolve legacy Coomer URL {url} to coomerfans: {exc}')
-        return url
+    search_terms = [lookup]
+    if service:
+        profile = api_fetch_creator_profile('https://coomer.st', service, lookup)
+        if profile and profile.get('name'):
+            search_terms.insert(0, profile['name'])
 
-    for href in re.findall(r'href=["\']([^"\']+)["\']', res.text, flags=re.I):
-        if '/u/' not in href:
+    for term in search_terms:
+        search_url = f'https://coomerfans.com/?q={quote_plus(term)}'
+        try:
+            res = requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=20)
+            res.raise_for_status()
+        except Exception as exc:
+            logger.warning(f'Failed to resolve legacy Coomer URL {url} to coomerfans via query {term}: {exc}')
             continue
-        if service and f'/u/{service}/' not in href.lower():
-            continue
-        if lookup.lower() not in href.lower():
-            continue
-        return urljoin('https://coomerfans.com', href)
+
+        for href in re.findall(r'href=["\']([^"\']+)["\']', res.text, flags=re.I):
+            if '/u/' not in href:
+                continue
+            href_lower = href.lower()
+            if service and f'/u/{service}/' not in href_lower:
+                continue
+            if term.lower() not in href_lower:
+                continue
+            return urljoin('https://coomerfans.com', href)
 
     logger.warning(f'No matching coomerfans page found for legacy URL {url}')
     return url
