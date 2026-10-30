@@ -40,7 +40,7 @@ def parse_media_urls_from_html(url: str) -> List[NamedUrl]:
         candidate = candidate.split('?', 1)[0]
         if 'coomerfans.com' not in candidate.lower() and 'coomerfans.com' not in url.lower():
             continue
-        if '/storage/' not in candidate.lower() or '/istorage/' in candidate.lower():
+        if '/storage/' not in candidate.lower() and '/istorage/' not in candidate.lower():
             continue
 
         ext = Path(candidate).suffix.lower().lstrip('.')
