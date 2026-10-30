@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from sys import maxsize
 from typing import Optional, Set, Tuple
+from urllib.parse import urlparse, urlunparse
 
 
 logger = logging.getLogger(__name__)
@@ -16,9 +17,14 @@ Get the base URL of a given URL (naive, not very robust)
 Returns the second and top level domain of the URL
 """
 def base_url(url: str) -> str:
-    match = re.match(r'^https://[^/]+\.[^/]+', url)
-    if match is not None:
-        base = match.group(0)
+    if '://' not in url:
+        url = f'https://{url}'
+    parsed = urlparse(url)
+    host = parsed.netloc.lower().replace('www.', '')
+    if host.endswith('coomer.party') or host.endswith('coomerfans.com') or host.endswith('coomer.st'):
+        base = 'https://coomerfans.com'
+    elif host:
+        base = f'https://{host}'
     else:
         base = ''
     logger.debug(f'Base URL of ({url}) --> ({base})')
@@ -102,11 +108,15 @@ Sanitize the beginning of a URL to include https://www.
 Returns the sanitized URL.
 """
 def sanitize_url(url: str) -> str:
-    sanitized = re.sub(r'^https?://', '', url)
-    sanitized = re.sub(r'^www\.', '', sanitized)
-    sanitized = 'https://' + sanitized
-    if sanitized[-1] == '/':
-        sanitized = sanitized[:-1]
+    if '://' not in url:
+        url = f'https://{url}'
+
+    parsed = urlparse(url)
+    scheme = parsed.scheme or 'https'
+    host = parsed.netloc.lower().replace('www.', '')
+    if host.endswith('coomer.party') or host.endswith('coomerfans.com') or host.endswith('coomer.st'):
+        host = 'coomerfans.com'
+    sanitized = urlunparse((scheme, host, parsed.path.rstrip('/'), '', parsed.query, ''))
     logger.debug(f'Santized URL ({url}) --> ({sanitized})')
     return sanitized
 
