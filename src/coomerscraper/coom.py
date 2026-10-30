@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 from sys import maxsize
 from typing import List, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import quote_plus, urljoin, urlparse
 
 import requests
 
@@ -75,6 +75,63 @@ def parse_creator_identity(url: str) -> Tuple[str, Optional[str], str]:
         return segments[0], None, segments[-1]
 
     return segments[0], None, segments[-1] if len(segments) > 1 else ''
+
+
+def resolve_legacy_to_coomerfans(url: str) -> str:
+    if 'coomerfans.com' in url.lower():
+        return url
+
+    parsed = urlparse(url)
+    host = parsed.netloc.lower().replace('www.', '')
+    if not (host.endswith('coomer.st') or host.endswith('coomer.party')):
+        return url
+
+    segments = [segment for segment in parsed.path.split('/') if segment]
+    if not segments:
+        return url
+
+    lookup = None
+    service = None
+    if len(segments) >= 3 and segments[-2] == 'user':
+        service = segments[-3]
+        lookup = segments[-1]
+    elif len(segments) >= 4 and segments[-2] == 'post':
+        service = segments[-4]
+        lookup = segments[-3]
+    elif len(segments) >= 1:
+        lookup = segments[-1]
+        service = segments[0] if segments[0] not in {'u'} else None
+
+    if not lookup:
+        return url
+
+    search_terms = [lookup]
+    if service:
+        profile = api_fetch_creator_profile('https://coomer.st', service, lookup)
+        if profile and profile.get('name'):
+            search_terms.insert(0, profile['name'])
+
+    for term in search_terms:
+        search_url = f'https://coomerfans.com/?q={quote_plus(term)}'
+        try:
+            res = requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=20)
+            res.raise_for_status()
+        except Exception as exc:
+            logger.warning(f'Failed to resolve legacy Coomer URL {url} to coomerfans via query {term}: {exc}')
+            continue
+
+        for href in re.findall(r'href=["\']([^"\']+)["\']', res.text, flags=re.I):
+            if '/u/' not in href:
+                continue
+            href_lower = href.lower()
+            if service and f'/u/{service}/' not in href_lower:
+                continue
+            if term.lower() not in href_lower:
+                continue
+            return urljoin('https://coomerfans.com', href)
+
+    logger.warning(f'No matching coomerfans page found for legacy URL {url}')
+    return url
 
 
 """
@@ -153,18 +210,22 @@ Returns a list of NamedUrl extracted from the post.
 def process_post( url: str
                 , skip_img: bool
                 , skip_vid: bool ) -> List[NamedUrl]:
-    # Get the SLD and TLD of the URL
-    base = base_url(url)
-    path = urlparse(url).path
+    resolved_url = resolve_legacy_to_coomerfans(url)
+    base = base_url(resolved_url)
+    path = urlparse(resolved_url).path
     segments = [segment for segment in path.split('/') if segment]
-    service, creator_id, creator = parse_creator_identity(url)
+    service, creator_id, creator = parse_creator_identity(resolved_url)
     post_id = segments[-1]
     creator_key = creator_id or creator
 
     if 'coomerfans.com' in base:
-        named_urls = parse_media_urls_from_html(url)
+        named_urls = parse_media_urls_from_html(resolved_url)
         if named_urls:
             return [nu for nu in named_urls if not ((nu.url.split('.')[-1].lower() in IMG_EXTS and skip_img) or (nu.url.split('.')[-1].lower() in VID_EXTS and skip_vid))]
+
+    # coomer.st still exposes the original API interface; use it directly.
+    if 'coomer.st' in base:
+        logger.info('Using coomer.st API data source for media extraction')
 
     # Get the JSON version of the post
     post = [ api_fetch_post_single(base, service, creator_key, post_id)['post'] ]
@@ -197,15 +258,19 @@ def process_page( url: str
                 , skip_img: bool
                 , skip_vid: bool
                 , offsets: Tuple[Optional[int], Optional[int]] ) -> List[NamedUrl]:
-    # Get the SLD and TLD of the URL
-    base = base_url(url)
-    service, creator_id, creator = parse_creator_identity(url)
+    resolved_url = resolve_legacy_to_coomerfans(url)
+    base = base_url(resolved_url)
+    service, creator_id, creator = parse_creator_identity(resolved_url)
     creator_key = creator_id or creator
 
     if 'coomerfans.com' in base:
-        named_urls = parse_media_urls_from_html(url)
+        named_urls = parse_media_urls_from_html(resolved_url)
         if named_urls:
             return [nu for nu in named_urls if not ((nu.url.split('.')[-1].lower() in IMG_EXTS and skip_img) or (nu.url.split('.')[-1].lower() in VID_EXTS and skip_vid))]
+
+    # coomer.st still exposes the original API interface; use it directly.
+    if 'coomer.st' in base:
+        logger.info('Using coomer.st API data source for media extraction')
 
     # Round the offsets
     rounded_offsets = round_offsets(offsets, POSTS_PER_FETCH)
@@ -250,6 +315,8 @@ replaced by clear names using this function.
 Returns creator name as string
 """
 def get_creator_name(base: str, service: str, creator: str) -> str:
+    if 'coomerfans.com' in base:
+        return f'{creator}_{service}'
     profile = api_fetch_creator_profile(base, service, creator)
     if profile:
         return f'{profile["name"]}_{service}'
