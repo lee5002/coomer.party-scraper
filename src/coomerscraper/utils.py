@@ -21,7 +21,11 @@ def base_url(url: str) -> str:
         url = f'https://{url}'
     parsed = urlparse(url)
     host = parsed.netloc.lower().replace('www.', '')
-    if host.endswith('coomer.party') or host.endswith('coomerfans.com') or host.endswith('coomer.st'):
+    if host.endswith('coomer.party'):
+        base = 'https://coomer.st'
+    elif host.endswith('coomer.st'):
+        base = 'https://coomer.st'
+    elif host.endswith('coomerfans.com'):
         base = 'https://coomerfans.com'
     elif host:
         base = f'https://{host}'
@@ -114,7 +118,11 @@ def sanitize_url(url: str) -> str:
     parsed = urlparse(url)
     scheme = parsed.scheme or 'https'
     host = parsed.netloc.lower().replace('www.', '')
-    if host.endswith('coomer.party') or host.endswith('coomerfans.com') or host.endswith('coomer.st'):
+    if host.endswith('coomer.party'):
+        host = 'coomer.st'
+    elif host.endswith('coomer.st'):
+        host = 'coomer.st'
+    elif host.endswith('coomerfans.com'):
         host = 'coomerfans.com'
     sanitized = urlunparse((scheme, host, parsed.path.rstrip('/'), '', parsed.query, ''))
     logger.debug(f'Santized URL ({url}) --> ({sanitized})')

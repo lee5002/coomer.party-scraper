@@ -53,18 +53,30 @@ Download a single URL, cycling through random load-balancing servers.
 """
 def _download( url: NamedUrl, dst: Path, slot: int, q: queue.Queue, retries: int ) -> None:
     server_ident = randrange(4) + 1
-    static_url = url.url[10:]
     tmp = dst.with_suffix(dst.suffix + '.part')
     total = None
     errcnt = 0
 
+    def resolve_real_url() -> str:
+        # Media URLs can already be direct CDN links (coomerfans.com and coomer.st image hosts)
+        # or old load-balanced API URLs that include https://n{1..4}.
+        if url.url.startswith('https://n'):
+            return url.url
+        if url.url.startswith('https://img') or url.url.startswith('https://coomerfans.com') or url.url.startswith('https://coomer.st'):
+            return url.url
+        return f'https://n{server_ident}{url.url[10:]}'
+
     while True:
-        headers = { 'Connection': 'close' }
+        headers = {
+            'Connection': 'close',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        }
         done = tmp.stat().st_size if tmp.exists() else 0
         if done > 0:
             headers['Range'] = f'bytes={done}-'
-        
-        real_url = f'https://n{server_ident}{static_url}'
+
+        real_url = resolve_real_url()
         q.put(_ProgressUpdate(slot, done, total, str(dst), server_ident))
 
         try:
