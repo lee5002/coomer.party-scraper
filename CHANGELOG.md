@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.16](https://github.com/lee5002/coomer.party-scraper/compare/v4.1.15...v4.1.16) (2026-10-31)
+
+
+### Bug Fixes
+
+* hash existing media per creator ([770360c](https://github.com/lee5002/coomer.party-scraper/commit/770360cc829482af1520d127892e90e6307fe79e))
+
 ## [4.1.15](https://github.com/lee5002/coomer.party-scraper/compare/v4.1.14...v4.1.15) (2026-10-31)
 
 
