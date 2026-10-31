@@ -70,7 +70,7 @@ def _download( url: NamedUrl, dst: Path, slot: int, q: queue.Queue, retries: int
         headers = {
             'Connection': 'close',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+            'Accept': '*/*',
         }
         done = tmp.stat().st_size if tmp.exists() else 0
         if done > 0:
@@ -80,7 +80,7 @@ def _download( url: NamedUrl, dst: Path, slot: int, q: queue.Queue, retries: int
         q.put(_ProgressUpdate(slot, done, total, str(dst), server_ident))
 
         try:
-            with requests.get(real_url, stream=True, timeout=(3, 3), headers=headers) as res:
+            with requests.get(real_url, stream=True, timeout=(10, 60), headers=headers) as res:
                 res.raise_for_status()
 
                 if total is None:
