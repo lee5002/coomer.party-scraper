@@ -128,17 +128,6 @@ Features that degrade the user experience are likely to be rejected.
 This version is confirmed to work as of January 20, 2026. This approach uses the API when possible, which increases the reliability that it will continue to work in the future.
 
 
-
-
-
-## Disclaimer
-
-The website that this scraper targets is known to host media that is taken from many pay-per-view services without the consent of the original owner. By accessing this website (through a web browser or this tool), you are willfully viewing this stolen media. The user of the scraper is fully responsible for any consequences that may occur from these actions, and the developer(s) of this scraper does not assume responsibility for how the user chooses to act.
-
-
-
-
-
 ## Donate
 
 If you use this tool, you clearly like free things. But if you enjoy this project and want to support its continued development, feel free to contribute and open pull requests for approval :)
