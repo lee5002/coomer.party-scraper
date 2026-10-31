@@ -125,7 +125,7 @@ def get_arguments() -> Tuple[List[str], Path, bool, bool, Tuple[int,int], bool, 
 Driver function to handle argument parsing and sanity checks before going to coomer-specific details
 """
 def main():
-    print(f'Coomer Scraper v{__version__}')
+    print(f'Coomer Scraper v{__version__}', flush=True)
 
     # Get the program arguments or read them from stdin
     urls, dst, skip_img, skip_vid, offsets, dump_urls, jobs, retries = get_arguments()

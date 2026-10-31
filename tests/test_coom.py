@@ -239,6 +239,51 @@ class ParseMediaUrlsTests(unittest.TestCase):
             'https://coomerfans.com/data/video.mp4?hash=signature',
         )
 
+    def test_creator_folder_uses_creator_name_instead_of_numeric_id(self):
+        creator_url = 'https://coomerfans.com/u/onlyfans/319490/aellagirl'
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch('coomerscraper.coom.process_page', return_value=[]):
+                main(
+                    [creator_url],
+                    Path(temp_dir),
+                    skip_img=False,
+                    skip_vid=False,
+                    offsets=(None, None),
+                    dump_urls=False,
+                    jobs=1,
+                    retries=1,
+                )
+
+            self.assertTrue(
+                (Path(temp_dir) / 'aellagirl_onlyfans' / 'pics').is_dir()
+            )
+
+    def test_post_folder_uses_creator_name_from_post_page(self):
+        post_url = 'https://coomerfans.com/p/123/319490/onlyfans'
+        post_html = (
+            '<a href="/u/onlyfans/319490/aellagirl">aellagirl</a>'
+            '<div class="post-body"><img src="/storage/image.jpg"></div>'
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch('coomerscraper.coom.fetch_html', return_value=post_html):
+                with patch('coomerscraper.coom.multithread_download'):
+                    main(
+                        [post_url],
+                        Path(temp_dir),
+                        skip_img=False,
+                        skip_vid=False,
+                        offsets=(None, None),
+                        dump_urls=False,
+                        jobs=1,
+                        retries=1,
+                    )
+
+            self.assertTrue(
+                (Path(temp_dir) / 'aellagirl_onlyfans' / 'pics').is_dir()
+            )
+
     def test_non_coomerfans_urls_are_not_processed(self):
         with patch('coomerscraper.coom.fetch_html') as fetch:
             with patch('coomerscraper.coom.multithread_download') as download:
