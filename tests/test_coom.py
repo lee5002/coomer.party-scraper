@@ -30,8 +30,8 @@ class ParseMediaUrlsTests(unittest.TestCase):
         def log_info(message):
             events.append(('log', message))
 
-        def compute_hashes(dst):
-            events.append(('hash', dst))
+        def compute_hashes(path):
+            events.append(('hash', path))
             return {}
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -65,6 +65,51 @@ class ParseMediaUrlsTests(unittest.TestCase):
             index for index, event in enumerate(events) if event[0] == 'hash'
         )
         self.assertLess(hashing_log_index, hash_computation_index)
+        self.assertEqual(events[hash_computation_index][1], Path(temp_dir) / 'unknown')
+
+    def test_existing_files_are_hashed_once_per_creator(self):
+        creator_urls = [
+            'https://coomerfans.com/u/onlyfans/123/alice',
+            'https://coomerfans.com/u/onlyfans/456/bob',
+            'https://coomerfans.com/u/onlyfans/123/alice',
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch('coomerscraper.coom.process_page', return_value=[]):
+                with patch(
+                    'coomerscraper.coom.compute_file_hash_map',
+                    side_effect=lambda path: {path.name: path},
+                ) as compute_hashes:
+                    with patch(
+                        'coomerscraper.coom.multithread_download'
+                    ) as download:
+                        main(
+                            creator_urls,
+                            Path(temp_dir),
+                            skip_img=False,
+                            skip_vid=False,
+                            offsets=(None, None),
+                            dump_urls=False,
+                            jobs=1,
+                            retries=1,
+                        )
+
+        creator_roots = [
+            Path(temp_dir) / 'alice_onlyfans',
+            Path(temp_dir) / 'bob_onlyfans',
+        ]
+        self.assertEqual(
+            [call.args[0] for call in compute_hashes.call_args_list],
+            creator_roots,
+        )
+        self.assertEqual(
+            [call.kwargs['hashes'] for call in download.call_args_list],
+            [
+                {'alice_onlyfans': creator_roots[0]},
+                {'bob_onlyfans': creator_roots[1]},
+                {'alice_onlyfans': creator_roots[0]},
+            ],
+        )
 
     def test_fetch_html_retries_service_unavailable_after_retry_after(self):
         unavailable = requests.Response()

@@ -622,7 +622,7 @@ def main( urls: List[str]
         , retries: int) -> None:
 
     # Loop through the URLs to get more URLs
-    hashes = None
+    hashes_by_creator: Dict[str, Dict[str, Path]] = {}
     for url in urls:
         logger.info(f'Parsing argument-provided URL "{url}"')
         if base_url(url) != 'https://coomerfans.com':
@@ -677,9 +677,10 @@ def main( urls: List[str]
 
         # Remove URLs of files that already exist
         dst_root = dst / user
-        if hashes is None:
-            logger.info(f'Computing SHA-256 hashes of existing files in {dst}')
-            hashes = compute_file_hash_map(dst)
+        if user not in hashes_by_creator:
+            logger.info(f'Computing SHA-256 hashes of existing files in {dst_root}')
+            hashes_by_creator[user] = compute_file_hash_map(dst_root)
+        hashes = hashes_by_creator[user]
         named_urls = purge_duplicate_urls(dst_root, named_urls, hashes)
         logger.info(f'New number of media files to download is {len(named_urls)}')
 
