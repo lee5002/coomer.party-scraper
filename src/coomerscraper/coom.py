@@ -67,6 +67,8 @@ def parse_media_urls_from_html(url: str, html: Optional[str] = None) -> List[Nam
 def parse_post_urls_from_html(url: str, html: str) -> List[str]:
     page = urlparse(url)
     page_path = page.path.rstrip('/')
+    service, creator_id, creator = parse_creator_identity(url)
+    creator_key = creator_id or creator
     seen = set()
     post_urls = []
     for candidate in re.findall(r'href=["\']([^"\']+)["\']', html, flags=re.I):
@@ -74,16 +76,26 @@ def parse_post_urls_from_html(url: str, html: str) -> List[str]:
         post = urlparse(candidate)
         if post.netloc.lower() != page.netloc.lower():
             continue
-        if not post.path.startswith(f'{page_path}/'):
-            continue
-        relative_segments = [
-            segment for segment in post.path[len(page_path):].split('/') if segment
-        ]
-        is_post_path = (
+        relative_segments = []
+        if post.path.startswith(f'{page_path}/'):
+            relative_segments = [
+                segment for segment in post.path[len(page_path):].split('/') if segment
+            ]
+        is_nested_post = (
             len(relative_segments) == 1
             or (len(relative_segments) == 2 and relative_segments[0] == 'post')
         )
-        if not is_post_path or media_extension(post.path) in IMG_EXTS + VID_EXTS:
+        post_service, post_creator_id, post_creator = parse_creator_identity(candidate)
+        post_creator_key = post_creator_id or post_creator
+        is_creator_post = (
+            len(post.path.strip('/').split('/')) >= 5
+            and post.path.strip('/').split('/')[-2] == 'post'
+            and post_service == service
+            and post_creator_key == creator_key
+        )
+        if not (is_nested_post or is_creator_post):
+            continue
+        if media_extension(post.path) in IMG_EXTS + VID_EXTS:
             continue
         if candidate in seen:
             continue
@@ -97,8 +109,10 @@ def parse_creator_identity(url: str) -> Tuple[str, Optional[str], str]:
     if not segments:
         return '', None, ''
 
-    if segments[0] == 'u' and len(segments) >= 4:
-        return segments[1], segments[2], segments[3]
+    if segments[0] == 'u' and len(segments) >= 3:
+        if len(segments) >= 5 and segments[3] == 'post':
+            return segments[1], None, segments[2]
+        return segments[2], None, segments[1]
 
     if len(segments) >= 3 and segments[-2] == 'user':
         return segments[-3], None, segments[-1]
