@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.12](https://github.com/lee5002/coomer.party-scraper/compare/v4.1.11...v4.1.12) (2026-10-31)
+
+
+### Bug Fixes
+
+* deduplicate downloaded media by content hash ([8dff725](https://github.com/lee5002/coomer.party-scraper/commit/8dff725b35f58255e89ea1089bd6708eb7d123f1))
+
 ## [4.1.11](https://github.com/lee5002/coomer.party-scraper/compare/v4.1.10...v4.1.11) (2026-10-31)
 
 
