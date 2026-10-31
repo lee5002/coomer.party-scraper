@@ -1,19 +1,22 @@
 import logging
 import re
 from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
-from sys import maxsize
-from typing import List, Optional, Tuple
-from urllib.parse import quote_plus, urljoin, urlparse
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 
-from .networking import ( api_fetch_post_multi, api_fetch_post_single, api_fetch_creator_profile
-                        , multithread_download, NamedUrl, IMG_EXTS, VID_EXTS, media_extension )
-from .utils import base_url, compute_file_hashes, create_folder_tree, round_offsets, to_camel
+from .networking import (
+    multithread_download,
+    NamedUrl,
+    IMG_EXTS,
+    VID_EXTS,
+    media_extension,
+)
+from .utils import base_url, compute_file_hash_map, create_folder_tree
 
-
-POSTS_PER_FETCH = 50
 
 logger = logging.getLogger(__name__)
 
@@ -38,30 +41,181 @@ def parse_media_urls_from_html(url: str, html: Optional[str] = None) -> List[Nam
     seen = set()
     named_urls = []
     for candidate in re.findall(r'(?:src|href|data-src|poster)=["\']([^"\']+)["\']', html, flags=re.I):
-        if not candidate:
+        media_url = _coomerfans_media_url(url, candidate)
+        if not media_url or media_url in seen:
             continue
-        candidate = unescape(candidate)
-        if candidate.startswith('//'):
-            candidate = 'https:' + candidate
-        elif candidate.startswith('/'):
-            candidate = f'https://coomerfans.com{candidate}'
-        elif '://' not in candidate:
-            candidate = 'https://coomerfans.com/' + candidate.lstrip('/')
-
-        if 'coomerfans.com' not in candidate.lower() and 'coomerfans.com' not in url.lower():
-            continue
-        if not any(path in candidate.lower() for path in ('/storage/', '/istorage/', '/data/')):
-            continue
-
-        media_path = urlparse(candidate).path
-        ext = media_extension(candidate)
-        if ext not in IMG_EXTS and ext not in VID_EXTS:
-            continue
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        named_urls.append(NamedUrl(candidate, Path(media_path).name))
+        seen.add(media_url)
+        named_urls.append(
+            NamedUrl(media_url, Path(urlparse(media_url).path).name)
+        )
     return named_urls
+
+
+def parse_video_urls_from_html(url: str, html: Optional[str] = None) -> List[NamedUrl]:
+    return [
+        named_url
+        for named_url in parse_media_urls_from_html(url, html)
+        if media_extension(named_url.url) in VID_EXTS
+    ]
+
+
+def _coomerfans_media_url(page_url: str, candidate: Optional[str]) -> Optional[str]:
+    if not candidate:
+        return None
+
+    candidate = unescape(candidate.strip())
+    media_url = urljoin('https://coomerfans.com/', candidate)
+    parsed = urlparse(media_url)
+    host = (parsed.hostname or '').lower()
+    if host != 'coomerfans.com' and not host.endswith('.coomerfans.com'):
+        return None
+    if not parsed.path.startswith(('/storage/', '/data/')):
+        return None
+    if media_extension(media_url) not in IMG_EXTS + VID_EXTS:
+        return None
+    return media_url
+
+
+def _largest_srcset_candidate(srcset: Optional[str]) -> Optional[str]:
+    if not srcset:
+        return None
+
+    candidates = []
+    for source in srcset.split(','):
+        parts = source.strip().split()
+        if not parts:
+            continue
+        descriptor = parts[1] if len(parts) > 1 else '1x'
+        match = re.match(r'(\d+(?:\.\d+)?)(?:w|x)$', descriptor)
+        size = float(match.group(1)) if match else 1.0
+        candidates.append((size, parts[0]))
+    return max(candidates, default=(0, None))[1]
+
+
+class _PostBodyMediaParser(HTMLParser):
+    _void_tags = {
+        'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+        'link', 'meta', 'param', 'source', 'track', 'wbr',
+    }
+
+    def __init__(self, page_url: str):
+        super().__init__(convert_charrefs=True)
+        self.page_url = page_url
+        self.element_stack = []
+        self.named_urls = []
+        self.seen = set()
+
+    def _add_url(self, media_url: Optional[str]) -> None:
+        if not media_url or media_url in self.seen:
+            return
+        self.seen.add(media_url)
+        self.named_urls.append(
+            NamedUrl(media_url, Path(urlparse(media_url).path).name)
+        )
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        class_names = attributes.get('class', '').split()
+        is_post_body = tag == 'div' and 'post-body' in class_names
+        anchor_url = None
+        if tag == 'a':
+            anchor_url = _coomerfans_media_url(
+                self.page_url, attributes.get('href')
+            )
+
+        if tag not in self._void_tags:
+            self.element_stack.append((tag, is_post_body, anchor_url, None))
+
+        if not any(entry[1] for entry in self.element_stack):
+            return
+
+        if anchor_url:
+            self._add_url(anchor_url)
+            return
+
+        if tag == 'img':
+            srcset_url = _largest_srcset_candidate(attributes.get('srcset'))
+            candidate = (
+                attributes.get('data-original')
+                or srcset_url
+                or attributes.get('data-src')
+                or attributes.get('src')
+            )
+            media_url = _coomerfans_media_url(self.page_url, candidate)
+            if media_url:
+                media_ext = media_extension(media_url)
+                enclosing_link = next(
+                    (
+                        entry[2]
+                        for entry in reversed(self.element_stack)
+                        if entry[2]
+                    ),
+                    None,
+                )
+                picture_source = next(
+                    (
+                        entry[3]
+                        for entry in reversed(self.element_stack)
+                        if entry[0] == 'picture' and entry[3]
+                    ),
+                    None,
+                )
+                if picture_source and media_ext in IMG_EXTS:
+                    return
+                if not enclosing_link or media_extension(enclosing_link) != media_ext:
+                    self._add_url(media_url)
+            return
+
+        if tag in {'video', 'source', 'audio'}:
+            candidate = (
+                attributes.get('data-src')
+                or _largest_srcset_candidate(attributes.get('srcset'))
+                or attributes.get('src')
+            )
+            media_url = _coomerfans_media_url(self.page_url, candidate)
+            if not media_url:
+                return
+
+            picture_index = next(
+                (
+                    index
+                    for index in range(len(self.element_stack) - 1, -1, -1)
+                    if self.element_stack[index][0] == 'picture'
+                ),
+                None,
+            )
+            if picture_index is not None and media_extension(media_url) in IMG_EXTS:
+                picture = self.element_stack[picture_index]
+                if not picture[3]:
+                    self.element_stack[picture_index] = (
+                        picture[0],
+                        picture[1],
+                        picture[2],
+                        media_url,
+                    )
+                    self._add_url(media_url)
+            else:
+                self._add_url(media_url)
+
+    def handle_endtag(self, tag):
+        for index in range(len(self.element_stack) - 1, -1, -1):
+            if self.element_stack[index][0] == tag:
+                del self.element_stack[index:]
+                break
+
+
+def parse_post_body_media_urls_from_html(
+    url: str, html: Optional[str] = None
+) -> List[NamedUrl]:
+    if html is None:
+        html = fetch_html(url)
+    if html is None:
+        return []
+
+    parser = _PostBodyMediaParser(url)
+    parser.feed(html)
+    parser.close()
+    return parser.named_urls
 
 
 def parse_post_urls_from_html(url: str, html: str) -> List[str]:
@@ -108,6 +262,24 @@ def parse_post_urls_from_html(url: str, html: str) -> List[str]:
     return post_urls
 
 
+def parse_creator_pagination_urls(url: str, html: str) -> List[str]:
+    page = urlparse(url)
+    seen = set()
+    page_urls = []
+    for candidate in re.findall(r'href=["\']([^"\']+)["\']', html, flags=re.I):
+        candidate = urljoin(url, unescape(candidate))
+        parsed = urlparse(candidate)
+        if parsed.netloc.lower() != page.netloc.lower() or parsed.path != page.path:
+            continue
+        page_numbers = parse_qs(parsed.query).get('page', [])
+        if not any(number.isdigit() and int(number) > 1 for number in page_numbers):
+            continue
+        if candidate not in seen:
+            seen.add(candidate)
+            page_urls.append(candidate)
+    return page_urls
+
+
 def parse_creator_identity(url: str) -> Tuple[str, Optional[str], str]:
     segments = [segment for segment in urlparse(url).path.split('/') if segment]
     if not segments:
@@ -137,104 +309,6 @@ def parse_creator_identity(url: str) -> Tuple[str, Optional[str], str]:
         return segments[0], None, segments[-1]
 
     return segments[0], None, segments[-1] if len(segments) > 1 else ''
-
-
-def resolve_legacy_to_coomerfans(url: str) -> str:
-    if 'coomerfans.com' in url.lower():
-        return url
-
-    parsed = urlparse(url)
-    host = parsed.netloc.lower().replace('www.', '')
-    if not (host.endswith('coomer.st') or host.endswith('coomer.party')):
-        return url
-
-    segments = [segment for segment in parsed.path.split('/') if segment]
-    if not segments:
-        return url
-
-    lookup = None
-    service = None
-    if len(segments) >= 3 and segments[-2] == 'user':
-        service = segments[-3]
-        lookup = segments[-1]
-    elif len(segments) >= 4 and segments[-2] == 'post':
-        service = segments[-4]
-        lookup = segments[-3]
-    elif len(segments) >= 1:
-        lookup = segments[-1]
-        service = segments[0] if segments[0] not in {'u'} else None
-
-    if not lookup:
-        return url
-
-    search_terms = [lookup]
-    if service:
-        profile = api_fetch_creator_profile('https://coomer.st', service, lookup)
-        if profile and profile.get('name'):
-            search_terms.insert(0, profile['name'])
-
-    for term in search_terms:
-        search_url = f'https://coomerfans.com/?q={quote_plus(term)}'
-        try:
-            res = requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=20)
-            res.raise_for_status()
-        except Exception as exc:
-            logger.warning(f'Failed to resolve legacy Coomer URL {url} to coomerfans via query {term}: {exc}')
-            continue
-
-        for href in re.findall(r'href=["\']([^"\']+)["\']', res.text, flags=re.I):
-            if '/u/' not in href:
-                continue
-            href_lower = href.lower()
-            if service and f'/u/{service}/' not in href_lower:
-                continue
-            if term.lower() not in href_lower:
-                continue
-            return urljoin('https://coomerfans.com', href)
-
-    logger.warning(f'No matching coomerfans page found for legacy URL {url}')
-    return url
-
-
-"""
-Extract media URLs from a list of post JSONs
-- base: Base URL that the media should be one
-- posts: List of post JSONs to parse
-- skip_img: If images should be skipped
-- skip_vid: if videos should be skipped
-Returns a list of NamedUrl extracted from the posts
-"""
-def parse_posts_json( base: str
-                    , posts: List[dict]
-                    , skip_img: bool
-                    , skip_vid: bool ) -> List[NamedUrl]:
-    named_urls = []
-    base = base.replace('https://', 'https://n1.')
-    for post in posts:
-        title = to_camel(re.sub(r'[^A-Za-z0-9\s]+', '', post['title']))
-        datetime = re.sub('-|:', '', post['published'])
-        if 'path' in post['file']:
-            ext = media_extension(post['file']['path'])
-            if skip_vid and ext in VID_EXTS:
-                continue
-            if skip_img and ext in IMG_EXTS:
-                continue
-            name = f'{datetime}-{title}_0.{ext}'
-            url = f'{base}/data/{post["file"]["path"]}'
-            named_urls.append(NamedUrl(url, name))
-
-        for i, attachment in enumerate(post['attachments']):
-            ext = media_extension(attachment['path'])
-            if skip_vid and ext in VID_EXTS:
-                continue
-            if skip_img and ext in IMG_EXTS:
-                continue
-            url = f'{base}/data/{attachment["path"]}'
-            name = f'{datetime}-{title}_{i+1}.{ext}'
-            named_urls.append(NamedUrl(url, name))
-    return named_urls
-
-
 
 """
 Process a pre-fetched media URL
@@ -269,34 +343,20 @@ Returns a list of NamedUrl extracted from the post.
 def process_post( url: str
                 , skip_img: bool
                 , skip_vid: bool ) -> List[NamedUrl]:
-    resolved_url = resolve_legacy_to_coomerfans(url)
-    base = base_url(resolved_url)
-    path = urlparse(resolved_url).path
-    segments = [segment for segment in path.split('/') if segment]
-    service, creator_id, creator = parse_creator_identity(resolved_url)
-    post_id = segments[1] if segments[0] == 'p' else segments[-1]
-    creator_key = creator_id or creator
+    if base_url(url) != 'https://coomerfans.com':
+        logger.error(f'Cannot download post because no Coomerfans page was found: {url}')
+        return []
 
-    html_urls = []
-    if 'coomerfans.com' in base:
-        html_urls = parse_media_urls_from_html(resolved_url)
-        html_urls = [
-            nu for nu in html_urls
-            if not ((media_extension(nu.url) in IMG_EXTS and skip_img)
-                    or (media_extension(nu.url) in VID_EXTS and skip_vid))
-        ]
-
-    # coomer.st still exposes the original API interface; use it directly.
-    if 'coomer.st' in base:
-        logger.info('Using coomer.st API data source for media extraction')
-
-    # Get the JSON version of the post
-    post_response = api_fetch_post_single(base, service, creator_key, post_id)
-    post = [post_response['post']] if 'post' in post_response else []
-
-    # Parse the media URLs from the post
-    logger.info('Parsing media URLs from 1 post')
-    named_urls = html_urls + parse_posts_json(base, post, skip_img, skip_vid)
+    logger.info('Parsing media URLs from Coomerfans post body')
+    named_urls = parse_post_body_media_urls_from_html(url)
+    named_urls = [
+        named_url
+        for named_url in named_urls
+        if not (
+            (skip_img and media_extension(named_url.url) in IMG_EXTS)
+            or (skip_vid and media_extension(named_url.url) in VID_EXTS)
+        )
+    ]
     logger.info(f'Found {len(named_urls)} media files to download')
 
     # Remove duplicates by finding multiple posts that show the same media
@@ -322,64 +382,52 @@ def process_page( url: str
                 , skip_img: bool
                 , skip_vid: bool
                 , offsets: Tuple[Optional[int], Optional[int]] ) -> List[NamedUrl]:
-    resolved_url = resolve_legacy_to_coomerfans(url)
-    base = base_url(resolved_url)
-    service, creator_id, creator = parse_creator_identity(resolved_url)
-    creator_key = creator_id or creator
+    if base_url(url) != 'https://coomerfans.com':
+        logger.error(f'Cannot download page because no Coomerfans page was found: {url}')
+        return []
 
-    html_urls = []
-    if 'coomerfans.com' in base:
-        page_html = fetch_html(resolved_url)
-        html_urls = parse_media_urls_from_html(resolved_url, page_html)
-        post_urls = parse_post_urls_from_html(resolved_url, page_html) if page_html else []
-        if post_urls:
-            logger.info(f'Found {len(post_urls)} post links on creator page')
-            start = 0 if offsets[0] is None else offsets[0] - 1
-            end = None if offsets[1] is None else offsets[1]
-            for post_url in post_urls[start:end]:
-                html_urls.extend(parse_media_urls_from_html(post_url))
-        if html_urls:
-            seen = set()
-            filtered_urls = []
-            for nu in html_urls:
-                if nu.url in seen:
-                    continue
-                seen.add(nu.url)
-                ext = media_extension(nu.url)
-                if (skip_img and ext in IMG_EXTS) or (skip_vid and ext in VID_EXTS):
-                    continue
-                filtered_urls.append(nu)
-            html_urls = filtered_urls
+    page_html = fetch_html(url)
+    if page_html is None:
+        return []
 
-    # coomer.st still exposes the original API interface; use it directly.
-    if 'coomer.st' in base:
-        logger.info('Using coomer.st API data source for media extraction')
+    page_urls = [url]
+    seen_pages = {url}
+    post_urls = []
+    seen_posts = set()
+    page_index = 0
+    while page_index < len(page_urls):
+        page_url = page_urls[page_index]
+        current_html = page_html if page_index == 0 else fetch_html(page_url)
+        page_index += 1
+        if current_html is None:
+            continue
 
-    # Round the offsets
-    rounded_offsets = round_offsets(offsets, POSTS_PER_FETCH)
-
-    # Iterate through post ranges for the page
-    all_posts = []
-    offset = rounded_offsets[0]
-    while True:
-        logger.info(f'Fetching posts {offset + 1} - {offset + POSTS_PER_FETCH}')
-        curr_posts = api_fetch_post_multi(base, service, creator_key, offset)
-        all_posts += curr_posts
-        offset += POSTS_PER_FETCH
-        if len(curr_posts) % POSTS_PER_FETCH != 0 or len(curr_posts) == 0 or offset >= rounded_offsets[1]:
+        for post_url in parse_post_urls_from_html(page_url, current_html):
+            if post_url not in seen_posts:
+                seen_posts.add(post_url)
+                post_urls.append(post_url)
+        for next_page in parse_creator_pagination_urls(page_url, current_html):
+            if next_page not in seen_pages:
+                seen_pages.add(next_page)
+                page_urls.append(next_page)
+        if offsets[1] is not None and offsets[1] > 0 and len(post_urls) >= offsets[1]:
             break
-    
-    # Prune to user-requested offsets
-    if rounded_offsets[0] != 0 and offsets[0] is not None:
-        skip_start = offsets[0] - rounded_offsets[0] - 1
-        all_posts = all_posts[skip_start:]
-    if rounded_offsets[1] != maxsize and offsets[1] is not None:
-        skip_end = rounded_offsets[1] - offsets[1]
-        all_posts = all_posts[:-skip_end]
 
-    # Parse the media URLs from each post
-    logger.info(f'Parsing media URLs from {len(all_posts)} posts')
-    named_urls = html_urls + parse_posts_json(base, all_posts, skip_img, skip_vid)
+    logger.info(f'Found {len(post_urls)} post links on creator page')
+    start = 0 if offsets[0] is None else max(0, offsets[0] - 1)
+    end = None if offsets[1] is None else offsets[1]
+    named_urls = []
+    for post_url in post_urls[start:end]:
+        named_urls.extend(parse_post_body_media_urls_from_html(post_url))
+
+    named_urls = [
+        named_url
+        for named_url in named_urls
+        if not (
+            (skip_img and media_extension(named_url.url) in IMG_EXTS)
+            or (skip_vid and media_extension(named_url.url) in VID_EXTS)
+        )
+    ]
     logger.info(f'Found {len(named_urls)} media files to download')
 
     # Remove duplicates by finding multiple posts that show the same media
@@ -392,45 +440,44 @@ def process_page( url: str
     return unique_urls
 
 
-"""
-Get creator name as string. Some services only use integer IDs which can be 
-replaced by clear names using this function.
-Returns creator name as string
-"""
+"""Build a stable download folder name for a creator."""
 def get_creator_name(base: str, service: str, creator: str) -> str:
-    if 'coomerfans.com' in base:
-        return f'{creator}_{service}'
-    profile = api_fetch_creator_profile(base, service, creator)
-    if profile:
-        return f'{profile["name"]}_{service}'
-    else:
-        return f'{creator}_{service}'
+    return f'{creator}_{service}'
 
 
 """
-Remove duplicate URLs based on the SHA-256 hash of existing files.
-Note that since URLs are hashes, there should be no duplicates between posts.
+Remove duplicate URLs based on existing file hashes or stable media filenames.
 - dst: Directory to check for existing files.
 - named_urls: URLs to remove duplicates from.
 Returns a possibily reduced list of URLs
 """
-def purge_duplicate_urls(dst: Path, named_urls: List[NamedUrl]) -> List[NamedUrl]:
-    # Get the hashes of the existing files
-    hashes = compute_file_hashes(dst)
+def purge_duplicate_urls(
+    dst: Path,
+    named_urls: List[NamedUrl],
+    hashes: Optional[Dict[str, Path]] = None,
+) -> List[NamedUrl]:
+    if hashes is None:
+        hashes = compute_file_hash_map(dst)
+    existing_filenames = {
+        file.name.casefold()
+        for file in dst.glob('**/*')
+        if file.is_file() and file.suffix != '.part'
+    }
 
-    # Remove duplicates by finding URLs that includ the hash
     unique_urls = []
     for nu in named_urls:
-        url_hash = nu.url.split('/')[-1].split('.')[0]
-        if url_hash not in hashes:
+        media_path = Path(urlparse(nu.url).path)
+        url_hash = media_path.stem
+        filenames = {nu.name.casefold(), media_path.name.casefold()}
+        if not (url_hash in hashes or filenames.intersection(existing_filenames)):
             unique_urls.append(nu)
         else:
-            logger.debug(f'Removing from download list based on hash: {url_hash}')
+            logger.debug(f'Removing already downloaded media: {media_path.name}')
     return unique_urls
 
 
 """
-Driver function to download media from Coomer or Kemono
+Driver function to download media from Coomerfans
 - urls: List of URLs to download from (page, post, or pre-fetched media)
 - dst: Download destination for the media (per-creator subfolders will be made)
 - skip_img: If image files should be skipped when downloading
@@ -450,8 +497,12 @@ def main( urls: List[str]
         , retries: int) -> None:
 
     # Loop through the URLs to get more URLs
+    hashes = None
     for url in urls:
         logger.info(f'Parsing argument-provided URL "{url}"')
+        if base_url(url) != 'https://coomerfans.com':
+            logger.error(f'Only Coomerfans URLs can be downloaded: {url}')
+            continue
 
         path_segments = [segment for segment in urlparse(url).path.split('/') if segment]
         if len(path_segments) < 2:
@@ -473,7 +524,7 @@ def main( urls: List[str]
             named_urls = process_post(url, skip_img, skip_vid)
 
         # Fetch URLs to download media from pre-fetched media
-        elif 'data' in path_segments:
+        elif 'data' in path_segments or 'storage' in path_segments:
             logger.debug('URL is suspected to be pre-fetched media')
             if offsets[0] is not None or offsets[1] is not None:
                 logger.warning('Start and end offsets are ignored when downloading pre-fetched media')
@@ -489,8 +540,10 @@ def main( urls: List[str]
 
         # Remove URLs of files that already exist
         dst_root = dst / user
-        logger.info(f'Begin hashing files in {dst_root}')
-        named_urls = purge_duplicate_urls(dst_root, named_urls)
+        if hashes is None:
+            hashes = compute_file_hash_map(dst)
+        logger.info(f'Checking existing file hashes in {dst}')
+        named_urls = purge_duplicate_urls(dst_root, named_urls, hashes)
         logger.info(f'New number of media files to download is {len(named_urls)}')
 
         # Conditionally dump the URLs and return
@@ -506,6 +559,13 @@ def main( urls: List[str]
         dst_pics = dst_root / 'pics'
         dst_vids = dst_root / 'vids'
         logger.info(f'Downloading to {dst / user}')
-        multithread_download(named_urls, dst_pics, dst_vids, workers=jobs, retries=retries)
+        multithread_download(
+            named_urls,
+            dst_pics,
+            dst_vids,
+            hashes=hashes,
+            workers=jobs,
+            retries=retries,
+        )
 
     return

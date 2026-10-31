@@ -6,10 +6,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from random import randrange
 from tqdm import tqdm
-from typing import List, Optional
+from typing import Dict, List, Optional
 from urllib.parse import urlparse
+
+from .utils import compute_file_hash
 
 
 IMG_EXTS = [ 'jpg', 'jpeg', 'png', 'gif', 'webp' ]
@@ -46,10 +47,11 @@ class _ProgressUpdate:
     n: int
     finished: bool = False
     paused: bool = False
+    succeeded: bool = False
 
 
 """
-Download a single URL, cycling through random load-balancing servers.
+Download a single media URL, resuming after interrupted streams.
 - url: NamedUrl to download.
 - dst: Destination of the URL.
 - slot: Position in the progress rendering
@@ -57,19 +59,10 @@ Download a single URL, cycling through random load-balancing servers.
 - retries: Number of retries per media file
 """
 def _download( url: NamedUrl, dst: Path, slot: int, q: queue.Queue, retries: int ) -> None:
-    server_ident = randrange(4) + 1
     tmp = dst.with_suffix(dst.suffix + '.part')
     total = None
     errcnt = 0
-
-    def resolve_real_url() -> str:
-        # Media URLs can already be direct CDN links (coomerfans.com and coomer.st image hosts)
-        # or old load-balanced API URLs that include https://n{1..4}.
-        if url.url.startswith('https://n'):
-            return url.url
-        if url.url.startswith('https://img') or url.url.startswith('https://coomerfans.com') or url.url.startswith('https://coomer.st'):
-            return url.url
-        return f'https://n{server_ident}{url.url[10:]}'
+    succeeded = False
 
     while True:
         headers = {
@@ -81,11 +74,10 @@ def _download( url: NamedUrl, dst: Path, slot: int, q: queue.Queue, retries: int
         if done > 0:
             headers['Range'] = f'bytes={done}-'
 
-        real_url = resolve_real_url()
-        q.put(_ProgressUpdate(slot, done, total, str(dst), server_ident))
+        q.put(_ProgressUpdate(slot, done, total, str(dst), errcnt))
 
         try:
-            with requests.get(real_url, stream=True, timeout=(10, 60), headers=headers) as res:
+            with requests.get(url.url, stream=True, timeout=(10, 60), headers=headers) as res:
                 res.raise_for_status()
 
                 if total is None:
@@ -103,18 +95,28 @@ def _download( url: NamedUrl, dst: Path, slot: int, q: queue.Queue, retries: int
                         errcnt = 0
                         f.write(chunk)
                         done += len(chunk)
-                        q.put(_ProgressUpdate(slot, done, total, str(dst), server_ident))
+                        q.put(_ProgressUpdate(slot, done, total, str(dst), errcnt))
                 tmp.replace(dst)
+                succeeded = True
 
         except (requests.RequestException, requests.exceptions.ReadTimeout):
-            q.put(_ProgressUpdate(slot, done, total, str(dst), server_ident, paused=True))
             errcnt += 1
+            q.put(_ProgressUpdate(slot, done, total, str(dst), errcnt, paused=True))
             if retries is None or errcnt < retries:
                 time.sleep(THROTTLE_TIME)
-                server_ident = randrange(3) + 1
                 continue
         
-        q.put(_ProgressUpdate(slot, done, total, str(dst), server_ident, finished=True))
+        q.put(
+            _ProgressUpdate(
+                slot,
+                done,
+                total,
+                str(dst),
+                errcnt,
+                finished=True,
+                succeeded=succeeded,
+            )
+        )
         return
 
 
@@ -196,22 +198,25 @@ def api_fetch_creator_profile(base: str, service: str, creator: str) -> dict:
 
 
 """
-Download a list of NamedUrl using multithreading, checking for duplicates.
+Download a list of NamedUrl using multithreading and remove newly downloaded
+files whose content already exists locally.
 - urls: List of NamedUrl to download.
 - dst_pics: Path to download pictures to.
 - dst_vids: Path to download videos to.
+- hashes: Existing SHA-256 index, updated as downloads complete.
 - workers: Maximum number of threads to use for downloading.
 - retries: Number of retries per media file
-Returns the number of unique downloads successfully performed.
+Returns the updated SHA-256 index.
 """
 def multithread_download( urls: List[NamedUrl]
                         , dst_pics: Path
                         , dst_vids: Path
-                        , hashes: dict[bytes, Path] = {}
+                        , hashes: Optional[Dict[str, Path]] = None
                         , workers: int = 8
                         , retries: int = None
-                        ) -> dict[bytes, Path]:
+                        ) -> Dict[str, Path]:
     q: queue.Queue = queue.Queue()
+    hashes = {} if hashes is None else hashes
     url_iter = iter(urls)
     max_desc_width = max((len(u.name) for u in urls), default=0) + 6
 
@@ -254,6 +259,17 @@ def multithread_download( urls: List[NamedUrl]
                 bar.set_description((f'[ {msg.n} ] ' + msg.desc).ljust(max_desc_width))
 
             if msg.finished:
+                if msg.succeeded:
+                    downloaded_path = Path(msg.desc)
+                    file_hash = compute_file_hash(downloaded_path)
+                    duplicate_path = hashes.get(file_hash)
+                    if duplicate_path is not None and duplicate_path != downloaded_path:
+                        duplicate_path.unlink()
+                        logger.info(
+                            f'Replaced duplicate file {duplicate_path} with '
+                            f'{downloaded_path} to preserve the current media filename'
+                        )
+                    hashes[file_hash] = downloaded_path
                 master_bar.update(1)
                 if submit_next(msg.slot):
                     bar.reset()
