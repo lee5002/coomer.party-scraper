@@ -31,7 +31,13 @@ def get_arguments() -> Tuple[List[str], Path, bool, bool, Tuple[int,int], bool, 
     parser.add_argument('-o', '--out', type=str, default=os.getcwd(), help='download destination (default: CWD)')
     parser.add_argument('--skip-imgs', action='store_true', help='skip image downloads')
     parser.add_argument('--skip-vids', action='store_true', help='skip video downloads')
-    parser.add_argument('--retries', type=int, default=None, dest='retries', help='number of retries per media file (default: None which results in unlimited)')
+    parser.add_argument(
+        '--retries',
+        type=int,
+        default=None,
+        dest='retries',
+        help='number of retries for media and page requests (default: unlimited for media, 3 for pages)',
+    )
 
     # Handle the special case of logging data
     log_file = None
@@ -110,7 +116,12 @@ def get_arguments() -> Tuple[List[str], Path, bool, bool, Tuple[int,int], bool, 
         logger.info(f'Starting offset is {offs_start}')
         logger.info(f'Ending offset is {offs_end}')
         logger.info(f'There will be {jobs} concurrent download threads')
-        logger.info(f'On each media file {retries} retries will be made')
+        logger.info(
+            f'Retries per media file: {retries if retries is not None else "unlimited"}'
+        )
+        logger.info(
+            f'Retries per page request: {retries if retries is not None else 3}'
+        )
         print()
         confirmed = input('Continue to download (Y/n): ')
         if len(confirmed) > 0 and confirmed.lower()[0] != 'y':

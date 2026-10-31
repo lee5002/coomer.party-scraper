@@ -1,5 +1,8 @@
 import logging
 import re
+import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
@@ -20,21 +23,92 @@ from .utils import base_url, compute_file_hash_map, create_folder_tree
 
 logger = logging.getLogger(__name__)
 
+HTML_DEFAULT_RETRIES = 3
+HTML_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
-def fetch_html(url: str) -> Optional[str]:
-    try:
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=20)
-        res.raise_for_status()
-    except Exception as exc:
-        logger.warning(f'Failed to fetch HTML for {url}: {exc}')
-        return None
 
-    return res.text
+class HtmlFetchError(Exception):
+    pass
+
+
+def _html_retry_delay(response, attempt: int) -> float:
+    retry_after = response.headers.get('Retry-After')
+    if retry_after:
+        try:
+            return max(0, float(retry_after))
+        except ValueError:
+            try:
+                retry_time = parsedate_to_datetime(retry_after)
+                if retry_time.tzinfo is None:
+                    retry_time = retry_time.replace(tzinfo=timezone.utc)
+                return max(
+                    0,
+                    (retry_time - datetime.now(timezone.utc)).total_seconds(),
+                )
+            except (TypeError, ValueError, OverflowError):
+                pass
+    return min(30, 2 ** (attempt + 1))
+
+
+def fetch_html(url: str, retries: Optional[int] = None) -> Optional[str]:
+    max_retries = HTML_DEFAULT_RETRIES if retries is None else max(0, retries)
+    for attempt in range(max_retries + 1):
+        try:
+            res = requests.get(
+                url,
+                headers={'User-Agent': 'Mozilla/5.0'},
+                timeout=20,
+            )
+            if res.status_code in HTML_RETRYABLE_STATUS_CODES:
+                error = requests.HTTPError(
+                    f'{res.status_code} response while fetching {url}',
+                    response=res,
+                )
+                if attempt == max_retries:
+                    logger.error(
+                        f'Failed to fetch HTML for {url} after '
+                        f'{max_retries + 1} attempts: {error}'
+                    )
+                    raise HtmlFetchError(str(error)) from error
+
+                delay = _html_retry_delay(res, attempt)
+                logger.warning(
+                    f'Failed to fetch HTML for {url}: {error}. '
+                    f'Retrying in {delay:g} seconds '
+                    f'({attempt + 1}/{max_retries})'
+                )
+                time.sleep(delay)
+                continue
+            res.raise_for_status()
+            return res.text
+        except requests.HTTPError as exc:
+            logger.warning(f'Failed to fetch HTML for {url}: {exc}')
+            return None
+        except requests.RequestException as exc:
+            if attempt == max_retries:
+                logger.error(
+                    f'Failed to fetch HTML for {url} after '
+                    f'{max_retries + 1} attempts: {exc}'
+                )
+                raise HtmlFetchError(str(exc)) from exc
+
+            delay = min(30, 2 ** (attempt + 1))
+            logger.warning(
+                f'Failed to fetch HTML for {url}: {exc}. '
+                f'Retrying in {delay:g} seconds '
+                f'({attempt + 1}/{max_retries})'
+            )
+            time.sleep(delay)
+
+    return None
 
 
 def parse_media_urls_from_html(url: str, html: Optional[str] = None) -> List[NamedUrl]:
     if html is None:
-        html = fetch_html(url)
+        try:
+            html = fetch_html(url)
+        except HtmlFetchError:
+            return []
     if html is None:
         return []
 
@@ -208,7 +282,10 @@ def parse_post_body_media_urls_from_html(
     url: str, html: Optional[str] = None
 ) -> List[NamedUrl]:
     if html is None:
-        html = fetch_html(url)
+        try:
+            html = fetch_html(url)
+        except HtmlFetchError:
+            return []
     if html is None:
         return []
 
@@ -408,12 +485,17 @@ Returns a list of NamedUrl extracted from all posts belonging to the page.
 def process_page( url: str
                 , skip_img: bool
                 , skip_vid: bool
-                , offsets: Tuple[Optional[int], Optional[int]] ) -> List[NamedUrl]:
+                , offsets: Tuple[Optional[int], Optional[int]]
+                , retries: Optional[int] = None ) -> List[NamedUrl]:
     if base_url(url) != 'https://coomerfans.com':
         logger.error(f'Cannot download page because no Coomerfans page was found: {url}')
         return []
 
-    page_html = fetch_html(url)
+    try:
+        page_html = fetch_html(url, retries=retries)
+    except HtmlFetchError as exc:
+        logger.warning(f'Aborting creator scan for {url}: {exc}')
+        return []
     if page_html is None:
         return []
 
@@ -424,7 +506,15 @@ def process_page( url: str
     page_index = 0
     while page_index < len(page_urls):
         page_url = page_urls[page_index]
-        current_html = page_html if page_index == 0 else fetch_html(page_url)
+        try:
+            current_html = (
+                page_html
+                if page_index == 0
+                else fetch_html(page_url, retries=retries)
+            )
+        except HtmlFetchError as exc:
+            logger.warning(f'Aborting creator scan at {page_url}: {exc}')
+            break
         page_index += 1
         if current_html is None:
             continue
@@ -445,7 +535,15 @@ def process_page( url: str
     end = None if offsets[1] is None else offsets[1]
     named_urls = []
     for post_url in post_urls[start:end]:
-        named_urls.extend(parse_post_body_media_urls_from_html(post_url))
+        try:
+            post_html = fetch_html(post_url, retries=retries)
+        except HtmlFetchError as exc:
+            logger.warning(f'Aborting creator scan at {post_url}: {exc}')
+            break
+        if post_html is not None:
+            named_urls.extend(
+                parse_post_body_media_urls_from_html(post_url, post_html)
+            )
 
     named_urls = [
         named_url
@@ -547,10 +645,18 @@ def main( urls: List[str]
             logger.debug('URL is suspected to be a post')
             if offsets[0] is not None or offsets[1] is not None:
                 logger.warning('Start and end offsets are ignored when downloading a post')
-            post_html = fetch_html(url)
+            try:
+                post_html = fetch_html(url, retries=retries)
+            except HtmlFetchError as exc:
+                logger.warning(f'Skipping post {url}: {exc}')
+                continue
             creator_name = parse_creator_name_from_html(url, post_html) or creator
             user = get_creator_name(base_url(url), service, creator_name)
-            named_urls = process_post(url, skip_img, skip_vid, post_html)
+            named_urls = (
+                process_post(url, skip_img, skip_vid, post_html)
+                if post_html is not None
+                else []
+            )
 
         # Fetch URLs to download media from pre-fetched media
         elif 'data' in path_segments or 'storage' in path_segments:
@@ -565,7 +671,9 @@ def main( urls: List[str]
         else:
             logger.debug('URL is suspected to be a page')
             user = get_creator_name(base_url(url), service, creator)
-            named_urls = process_page(url, skip_img, skip_vid, offsets)
+            named_urls = process_page(
+                url, skip_img, skip_vid, offsets, retries=retries
+            )
 
         # Remove URLs of files that already exist
         dst_root = dst / user

@@ -64,10 +64,12 @@ options:
   -o, --out OUT         download destination (default: CWD)
   --skip-imgs           skip image downloads
   --skip-vids           skip video downloads
-  --retries RETRIES     number of retries per media file (default: None which results in unlimited)
+  --retries RETRIES     retries for media and page requests (media default: unlimited; page default: 3)
 ```
 
 The URL must be a Coomerfans page for a creator, a post from a creator, or a single media file. The starting and ending offsets are only respected when downloading from a creator page. When downloading a single media file, the creator name cannot be determined, so it is saved in a subfolder named "unknown." After each download, its SHA-256 hash is compared with local files; when identical content is found, the old copy is deleted and the new file is kept under its current media filename.
+
+Temporary page errors are retried according to `--retries` (three retries by default), respecting the server's `Retry-After` header when provided. If retries are exhausted, the creator scan stops fetching further posts to avoid repeatedly hitting an unavailable service.
 
 If the URL is omitted, then you will be prompted for all parameters during execution.
 

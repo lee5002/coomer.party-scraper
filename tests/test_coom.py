@@ -4,7 +4,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import requests
+
 from coomerscraper.coom import (
+    HtmlFetchError,
+    fetch_html,
     main,
     parse_creator_identity,
     parse_media_urls_from_html,
@@ -20,6 +24,96 @@ from coomerscraper.utils import base_url, sanitize_url
 
 
 class ParseMediaUrlsTests(unittest.TestCase):
+    def test_fetch_html_retries_service_unavailable_after_retry_after(self):
+        unavailable = requests.Response()
+        unavailable.status_code = 503
+        unavailable.url = 'https://coomerfans.com/test'
+        unavailable.headers['Retry-After'] = '3'
+        available = requests.Response()
+        available.status_code = 200
+        available.url = 'https://coomerfans.com/test'
+        available._content = b'<html>available</html>'
+
+        with patch(
+            'coomerscraper.coom.requests.get',
+            side_effect=[unavailable, available],
+        ) as get:
+            with patch('coomerscraper.coom.time.sleep') as sleep:
+                html = fetch_html('https://coomerfans.com/test')
+
+        self.assertEqual(html, '<html>available</html>')
+        self.assertEqual(get.call_count, 2)
+        sleep.assert_called_once_with(3.0)
+
+    def test_fetch_html_stops_after_bounded_service_unavailable_retries(self):
+        unavailable = requests.Response()
+        unavailable.status_code = 503
+        unavailable.url = 'https://coomerfans.com/test'
+
+        with patch(
+            'coomerscraper.coom.requests.get',
+            return_value=unavailable,
+        ) as get:
+            with patch('coomerscraper.coom.time.sleep') as sleep:
+                with self.assertRaises(HtmlFetchError):
+                    fetch_html('https://coomerfans.com/test')
+
+        self.assertEqual(get.call_count, 4)
+        self.assertEqual(
+            [call.args[0] for call in sleep.call_args_list],
+            [2, 4, 8],
+        )
+
+    def test_fetch_html_uses_configured_retry_count(self):
+        unavailable = requests.Response()
+        unavailable.status_code = 503
+        unavailable.url = 'https://coomerfans.com/test'
+        unavailable.headers['Retry-After'] = '0'
+
+        with patch(
+            'coomerscraper.coom.requests.get',
+            return_value=unavailable,
+        ) as get:
+            with patch('coomerscraper.coom.time.sleep'):
+                with self.assertRaises(HtmlFetchError):
+                    fetch_html('https://coomerfans.com/test', retries=2)
+
+        self.assertEqual(get.call_count, 3)
+
+    def test_creator_scan_stops_after_exhausted_transient_post_error(self):
+        creator_url = 'https://coomerfans.com/u/fansly/289067/creator'
+        first_post_url = 'https://coomerfans.com/p/123/289067/fansly'
+        second_post_url = 'https://coomerfans.com/p/456/289067/fansly'
+        page_html = (
+            f'<a href="{first_post_url}">First</a>'
+            f'<a href="{second_post_url}">Second</a>'
+        )
+        first_post_html = (
+            '<div class="post-body"><img src="/storage/first.jpg"></div>'
+        )
+
+        with patch(
+            'coomerscraper.coom.fetch_html',
+            side_effect=[
+                page_html,
+                first_post_html,
+                HtmlFetchError('503 Server Error'),
+            ],
+        ) as fetch:
+            named_urls = process_page(
+                creator_url,
+                skip_img=False,
+                skip_vid=False,
+                offsets=(None, None),
+                retries=16,
+            )
+
+        self.assertEqual([url.name for url in named_urls], ['first.jpg'])
+        self.assertEqual(fetch.call_count, 3)
+        self.assertTrue(
+            all(call.kwargs['retries'] == 16 for call in fetch.call_args_list)
+        )
+
     def test_prefetched_video_keeps_signed_query_string(self):
         media_url = 'https://coomerfans.com/data/video.mp4?e=1&hash=signature'
 
