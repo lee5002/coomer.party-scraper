@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.1.14](https://github.com/lee5002/coomer.party-scraper/compare/v4.1.13...v4.1.14) (2026-10-31)
+
+
+### Bug Fixes
+
+* retry temporary page fetch failures ([bd4c26a](https://github.com/lee5002/coomer.party-scraper/commit/bd4c26abc3903db9cdab96c10d4d37620bd03d46))
+* use configured retry count for page requests ([8a15e77](https://github.com/lee5002/coomer.party-scraper/commit/8a15e77bf469d42eb6012991ab58b84da810d35e))
+
 ## [4.1.13](https://github.com/lee5002/coomer.party-scraper/compare/v4.1.12...v4.1.13) (2026-10-31)
 
 
