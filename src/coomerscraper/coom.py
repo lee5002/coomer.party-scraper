@@ -18,17 +18,26 @@ POSTS_PER_FETCH = 50
 logger = logging.getLogger(__name__)
 
 
-def parse_media_urls_from_html(url: str) -> List[NamedUrl]:
+def fetch_html(url: str) -> Optional[str]:
     try:
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=20)
         res.raise_for_status()
     except Exception as exc:
         logger.warning(f'Failed to fetch HTML for {url}: {exc}')
+        return None
+
+    return res.text
+
+
+def parse_media_urls_from_html(url: str, html: Optional[str] = None) -> List[NamedUrl]:
+    if html is None:
+        html = fetch_html(url)
+    if html is None:
         return []
 
     seen = set()
     named_urls = []
-    for candidate in re.findall(r'(?:src|href|data-src|poster)=["\']([^"\']+)["\']', res.text, flags=re.I):
+    for candidate in re.findall(r'(?:src|href|data-src|poster)=["\']([^"\']+)["\']', html, flags=re.I):
         if not candidate:
             continue
         candidate = unescape(candidate)
@@ -53,6 +62,34 @@ def parse_media_urls_from_html(url: str) -> List[NamedUrl]:
         seen.add(candidate)
         named_urls.append(NamedUrl(candidate, Path(media_path).name))
     return named_urls
+
+
+def parse_post_urls_from_html(url: str, html: str) -> List[str]:
+    page = urlparse(url)
+    page_path = page.path.rstrip('/')
+    seen = set()
+    post_urls = []
+    for candidate in re.findall(r'href=["\']([^"\']+)["\']', html, flags=re.I):
+        candidate = urljoin(url, unescape(candidate))
+        post = urlparse(candidate)
+        if post.netloc.lower() != page.netloc.lower():
+            continue
+        if not post.path.startswith(f'{page_path}/'):
+            continue
+        relative_segments = [
+            segment for segment in post.path[len(page_path):].split('/') if segment
+        ]
+        is_post_path = (
+            len(relative_segments) == 1
+            or (len(relative_segments) == 2 and relative_segments[0] == 'post')
+        )
+        if not is_post_path or media_extension(post.path) in IMG_EXTS + VID_EXTS:
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        post_urls.append(candidate)
+    return post_urls
 
 
 def parse_creator_identity(url: str) -> Tuple[str, Optional[str], str]:
@@ -217,21 +254,26 @@ def process_post( url: str
     post_id = segments[-1]
     creator_key = creator_id or creator
 
+    html_urls = []
     if 'coomerfans.com' in base:
-        named_urls = parse_media_urls_from_html(resolved_url)
-        if named_urls:
-            return [nu for nu in named_urls if not ((media_extension(nu.url) in IMG_EXTS and skip_img) or (media_extension(nu.url) in VID_EXTS and skip_vid))]
+        html_urls = parse_media_urls_from_html(resolved_url)
+        html_urls = [
+            nu for nu in html_urls
+            if not ((media_extension(nu.url) in IMG_EXTS and skip_img)
+                    or (media_extension(nu.url) in VID_EXTS and skip_vid))
+        ]
 
     # coomer.st still exposes the original API interface; use it directly.
     if 'coomer.st' in base:
         logger.info('Using coomer.st API data source for media extraction')
 
     # Get the JSON version of the post
-    post = [ api_fetch_post_single(base, service, creator_key, post_id)['post'] ]
+    post_response = api_fetch_post_single(base, service, creator_key, post_id)
+    post = [post_response['post']] if 'post' in post_response else []
 
     # Parse the media URLs from the post
     logger.info('Parsing media URLs from 1 post')
-    named_urls = parse_posts_json(base, post, skip_img, skip_vid)
+    named_urls = html_urls + parse_posts_json(base, post, skip_img, skip_vid)
     logger.info(f'Found {len(named_urls)} media files to download')
 
     # Remove duplicates by finding multiple posts that show the same media
@@ -262,10 +304,29 @@ def process_page( url: str
     service, creator_id, creator = parse_creator_identity(resolved_url)
     creator_key = creator_id or creator
 
+    html_urls = []
     if 'coomerfans.com' in base:
-        named_urls = parse_media_urls_from_html(resolved_url)
-        if named_urls:
-            return [nu for nu in named_urls if not ((media_extension(nu.url) in IMG_EXTS and skip_img) or (media_extension(nu.url) in VID_EXTS and skip_vid))]
+        page_html = fetch_html(resolved_url)
+        html_urls = parse_media_urls_from_html(resolved_url, page_html)
+        post_urls = parse_post_urls_from_html(resolved_url, page_html) if page_html else []
+        if post_urls:
+            logger.info(f'Found {len(post_urls)} post links on creator page')
+            start = 0 if offsets[0] is None else offsets[0] - 1
+            end = None if offsets[1] is None else offsets[1]
+            for post_url in post_urls[start:end]:
+                html_urls.extend(parse_media_urls_from_html(post_url))
+        if html_urls:
+            seen = set()
+            filtered_urls = []
+            for nu in html_urls:
+                if nu.url in seen:
+                    continue
+                seen.add(nu.url)
+                ext = media_extension(nu.url)
+                if (skip_img and ext in IMG_EXTS) or (skip_vid and ext in VID_EXTS):
+                    continue
+                filtered_urls.append(nu)
+            html_urls = filtered_urls
 
     # coomer.st still exposes the original API interface; use it directly.
     if 'coomer.st' in base:
@@ -295,7 +356,7 @@ def process_page( url: str
 
     # Parse the media URLs from each post
     logger.info(f'Parsing media URLs from {len(all_posts)} posts')
-    named_urls = parse_posts_json(base, all_posts, skip_img, skip_vid)
+    named_urls = html_urls + parse_posts_json(base, all_posts, skip_img, skip_vid)
     logger.info(f'Found {len(named_urls)} media files to download')
 
     # Remove duplicates by finding multiple posts that show the same media
