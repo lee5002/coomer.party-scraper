@@ -4,31 +4,26 @@ import os
 import re
 from pathlib import Path
 from sys import maxsize
-from typing import Optional, Set, Tuple
+from typing import Dict, Optional, Set, Tuple
 from urllib.parse import urlparse, urlunparse
 
 
 logger = logging.getLogger(__name__)
 
 
-"""
-Get the base URL of a given URL (naive, not very robust)
-- url: URL to parse
-Returns the second and top level domain of the URL
-"""
+"""Return the canonical Coomerfans origin or the supplied site's origin."""
 def base_url(url: str) -> str:
     if '://' not in url:
         url = f'https://{url}'
     parsed = urlparse(url)
-    host = parsed.netloc.lower().replace('www.', '')
-    if host.endswith('coomer.party'):
-        base = 'https://coomer.st'
-    elif host.endswith('coomer.st'):
-        base = 'https://coomer.st'
-    elif host.endswith('coomerfans.com'):
+    host = (parsed.hostname or '').lower()
+    if host == 'coomerfans.com' or host.endswith('.coomerfans.com'):
         base = 'https://coomerfans.com'
-    elif host:
-        base = f'https://{host}'
+    elif parsed.netloc:
+        netloc = parsed.netloc.lower()
+        if netloc.startswith('www.'):
+            netloc = netloc[4:]
+        base = f'https://{netloc}'
     else:
         base = ''
     logger.debug(f'Base URL of ({url}) --> ({base})')
@@ -42,18 +37,26 @@ This is the hash that is used in the media URLs.
 Returns a set of unique hashes from root.
 """
 def compute_file_hashes(root: Path) -> Set[str]:
-    hashes = set()
+    return set(compute_file_hash_map(root))
+
+
+def compute_file_hash(file: Path) -> str:
+    curr_hash = hashlib.sha256()
+    with file.open('rb') as f:
+        while True:
+            chunk = f.read(10 * 1024)
+            if not chunk:
+                break
+            curr_hash.update(chunk)
+    return curr_hash.hexdigest()
+
+
+def compute_file_hash_map(root: Path) -> Dict[str, Path]:
+    hashes = {}
     for file in root.glob('**/*'):
         if file.is_dir() or file.suffix == '.part':
             continue
-        with file.open('rb') as f:
-            curr_hash = hashlib.sha256()
-            while(True):
-                chunk = f.read(10 * 1024)
-                if not chunk:
-                    break
-                curr_hash.update(chunk)
-            hashes.add(curr_hash.hexdigest())
+        hashes.setdefault(compute_file_hash(file), file)
     return hashes
 
 
@@ -117,13 +120,9 @@ def sanitize_url(url: str) -> str:
 
     parsed = urlparse(url)
     scheme = parsed.scheme or 'https'
-    host = parsed.netloc.lower().replace('www.', '')
-    if host.endswith('coomer.party'):
-        host = 'coomer.st'
-    elif host.endswith('coomer.st'):
-        host = 'coomer.st'
-    elif host.endswith('coomerfans.com'):
-        host = 'coomerfans.com'
+    host = parsed.netloc.lower()
+    if host.startswith('www.'):
+        host = host[4:]
     sanitized = urlunparse((scheme, host, parsed.path.rstrip('/'), '', parsed.query, ''))
     logger.debug(f'Santized URL ({url}) --> ({sanitized})')
     return sanitized

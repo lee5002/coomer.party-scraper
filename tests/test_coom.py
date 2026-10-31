@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -5,13 +6,17 @@ from unittest.mock import patch
 
 from coomerscraper.coom import (
     main,
-    parse_media_urls_from_html,
-    parse_post_urls_from_html,
     parse_creator_identity,
-    process_post,
+    parse_media_urls_from_html,
+    parse_post_body_media_urls_from_html,
+    parse_post_urls_from_html,
     process_page,
+    process_post,
     process_prefetched,
+    purge_duplicate_urls,
 )
+from coomerscraper.networking import NamedUrl
+from coomerscraper.utils import base_url, sanitize_url
 
 
 class ParseMediaUrlsTests(unittest.TestCase):
@@ -69,113 +74,163 @@ class ParseMediaUrlsTests(unittest.TestCase):
             '<img src="/storage/preview.jpg">'
             f'<a href="{post_url}">View post</a>'
         )
-        post_html = '<video src="/data/video.mp4?hash=signature"></video>'
+        post_html = (
+            '<div class="post-body">'
+            '<video src="/data/video.mp4?hash=signature"></video>'
+            '</div>'
+        )
 
         with patch(
             'coomerscraper.coom.fetch_html',
             side_effect=[page_html, post_html],
         ):
-            with patch('coomerscraper.coom.api_fetch_post_multi', return_value=[]):
-                named_urls = process_page(
-                    creator_url,
-                    skip_img=False,
-                    skip_vid=False,
-                    offsets=(None, None),
-                )
+            named_urls = process_page(
+                creator_url,
+                skip_img=False,
+                skip_vid=False,
+                offsets=(None, None),
+            )
 
+        self.assertEqual([url.name for url in named_urls], ['video.mp4'])
         self.assertEqual(
-            [url.name for url in named_urls],
-            ['preview.jpg', 'video.mp4'],
-        )
-        self.assertEqual(
-            named_urls[1].url,
+            named_urls[0].url,
             'https://coomerfans.com/data/video.mp4?hash=signature',
         )
 
-    def test_creator_page_api_videos_are_not_hidden_by_preview_images(self):
+    def test_creator_page_queues_post_body_originals_not_creator_thumbnails(self):
         creator_url = 'https://coomerfans.com/u/fansly/289067/creator'
-        post = {
-            'title': 'A video',
-            'published': '2026-01-02',
-            'file': {'path': 'video.mp4'},
-            'attachments': [],
-        }
+        post_url = 'https://coomerfans.com/p/123/289067/fansly'
+        page_html = (
+            '<img src="/istorage/289067.jpg">'
+            '<img src="/storage/creator-preview.jpg">'
+            f'<a href="{post_url}">Post</a>'
+        )
+        post_html = (
+            '<div class="post-body">'
+            '<img src="/storage/image-preview.jpg" '
+            'srcset="/storage/image-preview.jpg 1x, '
+            '/storage/image-original.jpg 2x">'
+            '<video src="/data/video.mp4"></video>'
+            '</div>'
+            '<img src="/storage/recommended-post-preview.jpg">'
+        )
 
         with patch(
             'coomerscraper.coom.fetch_html',
-            return_value='<img src="/storage/preview.jpg">',
+            side_effect=[page_html, post_html],
         ):
-            with patch(
-                'coomerscraper.coom.api_fetch_post_multi',
-                return_value=[post],
-            ) as fetch_posts:
-                named_urls = process_page(
-                    creator_url,
-                    skip_img=False,
-                    skip_vid=False,
-                    offsets=(None, None),
-                )
+            named_urls = process_page(
+                creator_url,
+                skip_img=False,
+                skip_vid=False,
+                offsets=(None, None),
+            )
 
-        fetch_posts.assert_called_once_with(
-            'https://coomerfans.com', 'fansly', '289067', 0
-        )
         self.assertEqual(
-            [url.name for url in named_urls],
-            ['preview.jpg', '20260102-AVideo_0.mp4'],
+            [url.url for url in named_urls],
+            [
+                'https://coomerfans.com/storage/image-original.jpg',
+                'https://coomerfans.com/data/video.mp4',
+            ],
         )
 
-    def test_post_api_videos_are_not_hidden_by_preview_images(self):
-        post_url = 'https://coomerfans.com/service/user/creator/post/123'
-        post = {
-            'title': 'A video',
-            'published': '2026-01-02',
-            'file': {'path': 'video.mp4'},
-            'attachments': [],
-        }
+    def test_creator_page_follows_coomerfans_pagination(self):
+        creator_url = 'https://coomerfans.com/u/fansly/289067/creator'
+        page_one = (
+            '<a href="/p/123/289067/fansly">Post one</a>'
+            '<a href="?page=2">2</a>'
+        )
+        page_two = (
+            '<a href="/p/456/289067/fansly">Post two</a>'
+            '<a href="?page=1">1</a>'
+        )
+        post_one = (
+            '<div class="post-body">'
+            '<img src="/storage/first.jpg">'
+            '</div>'
+        )
+        post_two = (
+            '<div class="post-body">'
+            '<img src="/storage/second.jpg">'
+            '</div>'
+        )
 
         with patch(
             'coomerscraper.coom.fetch_html',
-            return_value='<img src="/storage/preview.jpg">',
+            side_effect=[page_one, page_two, post_one, post_two],
         ):
-            with patch(
-                'coomerscraper.coom.api_fetch_post_single',
-                return_value={'post': post},
-            ):
-                named_urls = process_post(
-                    post_url,
-                    skip_img=False,
-                    skip_vid=False,
-                )
+            named_urls = process_page(
+                creator_url,
+                skip_img=False,
+                skip_vid=False,
+                offsets=(None, None),
+            )
 
         self.assertEqual(
-            [url.name for url in named_urls],
-            ['preview.jpg', '20260102-AVideo_0.mp4'],
+            [url.url for url in named_urls],
+            [
+                'https://coomerfans.com/storage/first.jpg',
+                'https://coomerfans.com/storage/second.jpg',
+            ],
+        )
+
+    def test_post_download_uses_only_media_in_post_body(self):
+        post_url = 'https://coomerfans.com/p/123/289067/fansly'
+        html = (
+            '<img src="/storage/profile-preview.jpg">'
+            '<div class="post-body">'
+            '<a href="/storage/image-original.jpg">'
+            '<img src="/storage/image-preview.jpg">'
+            '</a>'
+            '<video src="/data/video.mp4"></video>'
+            '</div>'
+        )
+
+        with patch('coomerscraper.coom.fetch_html', return_value=html):
+            named_urls = process_post(
+                post_url,
+                skip_img=False,
+                skip_vid=False,
+            )
+
+        self.assertEqual(
+            [named_url.url for named_url in named_urls],
+            [
+                'https://coomerfans.com/storage/image-original.jpg',
+                'https://coomerfans.com/data/video.mp4',
+            ],
         )
 
     def test_creator_page_video_is_submitted_to_download_queue(self):
         creator_url = 'https://coomerfans.com/u/fansly/289067/creator'
         post_url = 'https://coomerfans.com/p/123/289067/fansly'
         page_html = f'<a href="{post_url}">View post</a>'
-        post_html = '<video src="/data/video.mp4?hash=signature"></video>'
+        post_html = (
+            '<div class="post-body">'
+            '<video src="/data/video.mp4?hash=signature"></video>'
+            '</div>'
+        )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch(
                 'coomerscraper.coom.fetch_html',
                 side_effect=[page_html, post_html],
             ):
-                with patch('coomerscraper.coom.api_fetch_post_multi', return_value=[]):
-                    with patch('coomerscraper.coom.get_creator_name', return_value='creator_service'):
-                        with patch('coomerscraper.coom.multithread_download') as download:
-                            main(
-                                [creator_url],
-                                Path(temp_dir),
-                                skip_img=False,
-                                skip_vid=False,
-                                offsets=(None, None),
-                                dump_urls=False,
-                                jobs=1,
-                                retries=1,
-                            )
+                with patch(
+                    'coomerscraper.coom.get_creator_name',
+                    return_value='creator_service',
+                ):
+                    with patch('coomerscraper.coom.multithread_download') as download:
+                        main(
+                            [creator_url],
+                            Path(temp_dir),
+                            skip_img=False,
+                            skip_vid=False,
+                            offsets=(None, None),
+                            dump_urls=False,
+                            jobs=1,
+                            retries=1,
+                        )
 
         queued_urls = download.call_args.args[0]
         self.assertEqual(len(queued_urls), 1)
@@ -183,6 +238,47 @@ class ParseMediaUrlsTests(unittest.TestCase):
             queued_urls[0].url,
             'https://coomerfans.com/data/video.mp4?hash=signature',
         )
+
+    def test_non_coomerfans_urls_are_not_processed(self):
+        with patch('coomerscraper.coom.fetch_html') as fetch:
+            with patch('coomerscraper.coom.multithread_download') as download:
+                main(
+                    ['https://example.com/u/fansly/creator'],
+                    Path('.'),
+                    skip_img=False,
+                    skip_vid=False,
+                    offsets=(None, None),
+                    dump_urls=False,
+                    jobs=1,
+                    retries=1,
+                )
+
+        fetch.assert_not_called()
+        download.assert_not_called()
+
+    def test_coomerfans_media_subdomains_are_supported_and_preserved(self):
+        cdn_url = (
+            'https://img5.coomerfans.com/storage/'
+            '2892ac-0199dab3-dc8c-7616-baa0-0d496f866afa.jpg'
+        )
+
+        self.assertEqual(base_url(cdn_url), 'https://coomerfans.com')
+        self.assertEqual(sanitize_url(cdn_url), cdn_url)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch('coomerscraper.coom.multithread_download') as download:
+                main(
+                    [cdn_url],
+                    Path(temp_dir),
+                    skip_img=False,
+                    skip_vid=False,
+                    offsets=(None, None),
+                    dump_urls=False,
+                    jobs=1,
+                    retries=1,
+                )
+
+        self.assertEqual(download.call_args.args[0][0].url, cdn_url)
 
     def test_post_urls_support_creatorfans_post_route_formats(self):
         creator_url = 'https://coomerfans.com/u/fansly/289067/creator'
@@ -203,7 +299,7 @@ class ParseMediaUrlsTests(unittest.TestCase):
             ],
         )
 
-    def test_creator_url_parses_service_and_creator_for_api(self):
+    def test_creator_url_parses_service_and_creator(self):
         self.assertEqual(
             parse_creator_identity('https://coomerfans.com/u/fansly/289067/creator'),
             ('fansly', '289067', 'creator'),
@@ -213,32 +309,94 @@ class ParseMediaUrlsTests(unittest.TestCase):
             ('fansly', '289067', '289067'),
         )
 
-    def test_coomerfans_post_route_uses_post_id_and_creator_for_api(self):
-        post = {
-            'title': 'A video',
-            'published': '2026-01-02',
-            'file': {'path': 'video.mp4'},
-            'attachments': [],
-        }
+    def test_post_body_parser_prefers_largest_image_and_excludes_thumbnails(self):
+        html = (
+            '<img src="/istorage/avatar.jpg">'
+            '<img src="/storage/creator-preview.jpg">'
+            '<div class="post-body">'
+            '<img src="/storage/small.jpg" '
+            'srcset="/storage/small.jpg 1x, /storage/large.jpg 2x">'
+            '<a href="/storage/original.jpg">'
+            '<img src="/storage/linked-preview.jpg">'
+            '</a>'
+            '<picture>'
+            '<source srcset="/storage/picture-large.jpg 1200w">'
+            '<img src="/storage/picture-small.jpg">'
+            '</picture>'
+            '<img src="https://example.com/image.jpg">'
+            '</div>'
+        )
 
+        named_urls = parse_post_body_media_urls_from_html(
+            'https://coomerfans.com/p/123/289067/fansly',
+            html,
+        )
+
+        self.assertEqual(
+            [named_url.url for named_url in named_urls],
+            [
+                'https://coomerfans.com/storage/large.jpg',
+                'https://coomerfans.com/storage/original.jpg',
+                'https://coomerfans.com/storage/picture-large.jpg',
+            ],
+        )
+
+    def test_existing_coomerfans_filename_is_removed_from_queue(self):
+        media_url = (
+            'https://img5.coomerfans.com/storage/8/ns/jy/'
+            '2892ac-0199dab3-dc8c-7616-baa0-0d496f866afa.jpg'
+        )
+        named_url = NamedUrl(
+            media_url,
+            '2892ac-0199dab3-dc8c-7616-baa0-0d496f866afa.jpg',
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            existing_file = (
+                Path(temp_dir)
+                / 'pics'
+                / '2892ac-0199dab3-dc8c-7616-baa0-0d496f866afa.jpg'
+            )
+            existing_file.parent.mkdir()
+            existing_file.write_bytes(b'already downloaded')
+
+            remaining = purge_duplicate_urls(Path(temp_dir), [named_url])
+
+        self.assertEqual(remaining, [])
+
+    def test_existing_content_hash_is_removed_from_queue(self):
+        content = b'already downloaded'
+        digest = hashlib.sha256(content).hexdigest()
+        named_url = NamedUrl(
+            f'https://coomerfans.com/storage/{digest}.jpg',
+            f'{digest}.jpg',
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            Path(temp_dir, 'existing.jpg').write_bytes(content)
+            remaining = purge_duplicate_urls(Path(temp_dir), [named_url])
+
+        self.assertEqual(remaining, [])
+
+    def test_post_route_extracts_post_body_from_coomerfans(self):
         with patch(
             'coomerscraper.coom.fetch_html',
-            return_value='<video src="/data/video.mp4"></video>',
+            return_value=(
+                '<div class="post-body">'
+                '<video src="/data/video.mp4"></video>'
+                '</div>'
+            ),
         ):
-            with patch(
-                'coomerscraper.coom.api_fetch_post_single',
-                return_value={'post': post},
-            ) as fetch_post:
-                urls = process_post(
-                    'https://coomerfans.com/p/91822068/289067/fansly',
-                    skip_img=False,
-                    skip_vid=False,
-                )
+            urls = process_post(
+                'https://coomerfans.com/p/91822068/289067/fansly',
+                skip_img=False,
+                skip_vid=False,
+            )
 
-        fetch_post.assert_called_once_with(
-            'https://coomerfans.com', 'fansly', '289067', '91822068'
+        self.assertEqual(
+            [url.url for url in urls],
+            ['https://coomerfans.com/data/video.mp4'],
         )
-        self.assertTrue(any(url.name.endswith('.mp4') for url in urls))
 
 
 if __name__ == '__main__':

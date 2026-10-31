@@ -67,7 +67,7 @@ options:
   --retries RETRIES     number of retries per media file (default: None which results in unlimited)
 ```
 
-The URL can be a page for a creator, a post from a creator, or a single media file. This scraper accepts both legacy coomer.party links and a coomerfans.com URL list, and it normalizes legacy entries to the current coomerfans host automatically. The starting and ending offsets are only respected when downloading from a page. When downloading a single media file, the creator name cannot be determined, thus goes in a subfolder named "unknown."
+The URL must be a Coomerfans page for a creator, a post from a creator, or a single media file. The starting and ending offsets are only respected when downloading from a creator page. When downloading a single media file, the creator name cannot be determined, so it is saved in a subfolder named "unknown." After each download, its SHA-256 hash is compared with local files; when identical content is found, the old copy is deleted and the new file is kept under its current media filename.
 
 If the URL is omitted, then you will be prompted for all parameters during execution.
 
