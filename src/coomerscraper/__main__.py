@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import List, Tuple
 
+from . import __version__
 from .coom import main as coom_main
 from .utils import sanitize_url
 
@@ -124,6 +125,8 @@ def get_arguments() -> Tuple[List[str], Path, bool, bool, Tuple[int,int], bool, 
 Driver function to handle argument parsing and sanity checks before going to coomer-specific details
 """
 def main():
+    print(f'Coomer Scraper v{__version__}')
+
     # Get the program arguments or read them from stdin
     urls, dst, skip_img, skip_vid, offsets, dump_urls, jobs, retries = get_arguments()
 
