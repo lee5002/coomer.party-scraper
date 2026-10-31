@@ -94,6 +94,10 @@ Alternatively, a Docker container can be run directly using a command like the f
 docker run -v /PATH/ON/YOUR/HOST:/app coomerscraper LINK1 LINK2
 ```
 
+## Releases
+
+Release Please prepares a release pull request from Conventional Commit messages. Merging that pull request updates the package version and creates a GitHub release and version tag. The release workflow then publishes the versioned Docker image and updates the `latest` tag.
+
 
 
 
