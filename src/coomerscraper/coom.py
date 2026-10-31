@@ -310,6 +310,32 @@ def parse_creator_identity(url: str) -> Tuple[str, Optional[str], str]:
 
     return segments[0], None, segments[-1] if len(segments) > 1 else ''
 
+
+def parse_creator_name_from_html(url: str, html: Optional[str]) -> Optional[str]:
+    if not html:
+        return None
+
+    service, creator_id, _ = parse_creator_identity(url)
+    if not creator_id:
+        return None
+
+    for candidate in re.findall(r'href=["\']([^"\']+)["\']', html, flags=re.I):
+        creator_url = urljoin(url, unescape(candidate))
+        if base_url(creator_url) != 'https://coomerfans.com':
+            continue
+        creator_service, linked_creator_id, creator_name = parse_creator_identity(
+            creator_url
+        )
+        if (
+            creator_service == service
+            and linked_creator_id == creator_id
+            and creator_name
+            and creator_name != creator_id
+        ):
+            return creator_name
+    return None
+
+
 """
 Process a pre-fetched media URL
 - url: Main URL of the pre-fetched media
@@ -342,13 +368,14 @@ Returns a list of NamedUrl extracted from the post.
 """
 def process_post( url: str
                 , skip_img: bool
-                , skip_vid: bool ) -> List[NamedUrl]:
+                , skip_vid: bool
+                , html: Optional[str] = None ) -> List[NamedUrl]:
     if base_url(url) != 'https://coomerfans.com':
         logger.error(f'Cannot download post because no Coomerfans page was found: {url}')
         return []
 
     logger.info('Parsing media URLs from Coomerfans post body')
-    named_urls = parse_post_body_media_urls_from_html(url)
+    named_urls = parse_post_body_media_urls_from_html(url, html)
     named_urls = [
         named_url
         for named_url in named_urls
@@ -520,8 +547,10 @@ def main( urls: List[str]
             logger.debug('URL is suspected to be a post')
             if offsets[0] is not None or offsets[1] is not None:
                 logger.warning('Start and end offsets are ignored when downloading a post')
-            user = get_creator_name(base_url(url), service, creator_key)
-            named_urls = process_post(url, skip_img, skip_vid)
+            post_html = fetch_html(url)
+            creator_name = parse_creator_name_from_html(url, post_html) or creator
+            user = get_creator_name(base_url(url), service, creator_name)
+            named_urls = process_post(url, skip_img, skip_vid, post_html)
 
         # Fetch URLs to download media from pre-fetched media
         elif 'data' in path_segments or 'storage' in path_segments:
@@ -535,7 +564,7 @@ def main( urls: List[str]
         # Fetch URLs to download media from a page
         else:
             logger.debug('URL is suspected to be a page')
-            user = get_creator_name(base_url(url), service, creator_key)
+            user = get_creator_name(base_url(url), service, creator)
             named_urls = process_page(url, skip_img, skip_vid, offsets)
 
         # Remove URLs of files that already exist

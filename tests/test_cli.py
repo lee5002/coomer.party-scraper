@@ -1,6 +1,4 @@
-import io
 import unittest
-from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,16 +18,14 @@ class CliVersionTests(unittest.TestCase):
             1,
             None,
         )
-        output = io.StringIO()
-
         with patch('coomerscraper.__main__.get_arguments', return_value=arguments):
             with patch('coomerscraper.__main__.coom_main'):
-                with redirect_stdout(output):
+                with patch('builtins.print') as print_output:
                     main()
 
-        self.assertEqual(
-            output.getvalue().count(f'Coomer Scraper v{__version__}'),
-            1,
+        print_output.assert_called_once_with(
+            f'Coomer Scraper v{__version__}',
+            flush=True,
         )
 
 
