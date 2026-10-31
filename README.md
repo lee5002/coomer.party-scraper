@@ -69,6 +69,8 @@ options:
 
 The URL must be a Coomerfans page for a creator, a post from a creator, or a single media file. The starting and ending offsets are only respected when downloading from a creator page. When downloading a single media file, the creator name cannot be determined, so it is saved in a subfolder named "unknown." After each download, its SHA-256 hash is compared with local files; when identical content is found, the old copy is deleted and the new file is kept under its current media filename.
 
+Temporary errors while fetching pages are retried up to three times, respecting the server's `Retry-After` header when provided. If a creator scan continues to receive temporary errors, it stops fetching further posts to avoid repeatedly hitting an unavailable service.
+
 If the URL is omitted, then you will be prompted for all parameters during execution.
 
 
