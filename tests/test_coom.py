@@ -7,6 +7,7 @@ from coomerscraper.coom import (
     main,
     parse_media_urls_from_html,
     parse_post_urls_from_html,
+    parse_creator_identity,
     process_post,
     process_page,
     process_prefetched,
@@ -62,8 +63,8 @@ class ParseMediaUrlsTests(unittest.TestCase):
         )
 
     def test_creator_page_follows_post_links_to_find_videos(self):
-        creator_url = 'https://coomerfans.com/u/service/creator'
-        post_url = f'{creator_url}/123'
+        creator_url = 'https://coomerfans.com/u/creator/service'
+        post_url = 'https://coomerfans.com/service/user/creator/post/123'
         page_html = (
             '<img src="/storage/preview.jpg">'
             f'<a href="{post_url}">View post</a>'
@@ -92,7 +93,7 @@ class ParseMediaUrlsTests(unittest.TestCase):
         )
 
     def test_creator_page_api_videos_are_not_hidden_by_preview_images(self):
-        creator_url = 'https://coomerfans.com/u/service/creator'
+        creator_url = 'https://coomerfans.com/u/creator/service'
         post = {
             'title': 'A video',
             'published': '2026-01-02',
@@ -107,7 +108,7 @@ class ParseMediaUrlsTests(unittest.TestCase):
             with patch(
                 'coomerscraper.coom.api_fetch_post_multi',
                 return_value=[post],
-            ):
+            ) as fetch_posts:
                 named_urls = process_page(
                     creator_url,
                     skip_img=False,
@@ -115,6 +116,9 @@ class ParseMediaUrlsTests(unittest.TestCase):
                     offsets=(None, None),
                 )
 
+        fetch_posts.assert_called_once_with(
+            'https://coomerfans.com', 'service', 'creator', 0
+        )
         self.assertEqual(
             [url.name for url in named_urls],
             ['preview.jpg', '20260102-AVideo_0.mp4'],
@@ -149,8 +153,8 @@ class ParseMediaUrlsTests(unittest.TestCase):
         )
 
     def test_creator_page_video_is_submitted_to_download_queue(self):
-        creator_url = 'https://coomerfans.com/u/service/creator'
-        post_url = f'{creator_url}/123'
+        creator_url = 'https://coomerfans.com/u/creator/service'
+        post_url = 'https://coomerfans.com/service/user/creator/post/123'
         page_html = f'<a href="{post_url}">View post</a>'
         post_html = '<video src="/data/video.mp4?hash=signature"></video>'
 
@@ -181,17 +185,27 @@ class ParseMediaUrlsTests(unittest.TestCase):
         )
 
     def test_post_urls_support_both_creator_page_route_formats(self):
-        creator_url = 'https://coomerfans.com/u/service/creator'
+        creator_url = 'https://coomerfans.com/u/creator/service'
         html = (
             f'<a href="{creator_url}/123">Post</a>'
-            f'<a href="{creator_url}/post/456">Another post</a>'
+            '<a href="https://coomerfans.com/service/user/creator/post/456">'
+            'Another post</a>'
         )
 
         post_urls = parse_post_urls_from_html(creator_url, html)
 
         self.assertEqual(
             post_urls,
-            [f'{creator_url}/123', f'{creator_url}/post/456'],
+            [
+                f'{creator_url}/123',
+                'https://coomerfans.com/service/user/creator/post/456',
+            ],
+        )
+
+    def test_creator_url_parses_service_and_creator_for_api(self):
+        self.assertEqual(
+            parse_creator_identity('https://coomerfans.com/u/creator/service'),
+            ('service', None, 'creator'),
         )
 
 
