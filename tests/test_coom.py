@@ -63,8 +63,8 @@ class ParseMediaUrlsTests(unittest.TestCase):
         )
 
     def test_creator_page_follows_post_links_to_find_videos(self):
-        creator_url = 'https://coomerfans.com/u/creator/service'
-        post_url = 'https://coomerfans.com/service/user/creator/post/123'
+        creator_url = 'https://coomerfans.com/u/fansly/289067/creator'
+        post_url = 'https://coomerfans.com/p/123/289067/fansly'
         page_html = (
             '<img src="/storage/preview.jpg">'
             f'<a href="{post_url}">View post</a>'
@@ -93,7 +93,7 @@ class ParseMediaUrlsTests(unittest.TestCase):
         )
 
     def test_creator_page_api_videos_are_not_hidden_by_preview_images(self):
-        creator_url = 'https://coomerfans.com/u/creator/service'
+        creator_url = 'https://coomerfans.com/u/fansly/289067/creator'
         post = {
             'title': 'A video',
             'published': '2026-01-02',
@@ -117,7 +117,7 @@ class ParseMediaUrlsTests(unittest.TestCase):
                 )
 
         fetch_posts.assert_called_once_with(
-            'https://coomerfans.com', 'service', 'creator', 0
+            'https://coomerfans.com', 'fansly', '289067', 0
         )
         self.assertEqual(
             [url.name for url in named_urls],
@@ -153,8 +153,8 @@ class ParseMediaUrlsTests(unittest.TestCase):
         )
 
     def test_creator_page_video_is_submitted_to_download_queue(self):
-        creator_url = 'https://coomerfans.com/u/creator/service'
-        post_url = 'https://coomerfans.com/service/user/creator/post/123'
+        creator_url = 'https://coomerfans.com/u/fansly/289067/creator'
+        post_url = 'https://coomerfans.com/p/123/289067/fansly'
         page_html = f'<a href="{post_url}">View post</a>'
         post_html = '<video src="/data/video.mp4?hash=signature"></video>'
 
@@ -184,12 +184,13 @@ class ParseMediaUrlsTests(unittest.TestCase):
             'https://coomerfans.com/data/video.mp4?hash=signature',
         )
 
-    def test_post_urls_support_both_creator_page_route_formats(self):
-        creator_url = 'https://coomerfans.com/u/creator/service'
+    def test_post_urls_support_creatorfans_post_route_formats(self):
+        creator_url = 'https://coomerfans.com/u/fansly/289067/creator'
         html = (
             f'<a href="{creator_url}/123">Post</a>'
-            '<a href="https://coomerfans.com/service/user/creator/post/456">'
-            'Another post</a>'
+            '<a href="https://coomerfans.com/p/456/289067/fansly">Another post</a>'
+            '<a href="https://coomerfans.com/p/789/other-creator/fansly">'
+            'Different creator</a>'
         )
 
         post_urls = parse_post_urls_from_html(creator_url, html)
@@ -198,15 +199,46 @@ class ParseMediaUrlsTests(unittest.TestCase):
             post_urls,
             [
                 f'{creator_url}/123',
-                'https://coomerfans.com/service/user/creator/post/456',
+                'https://coomerfans.com/p/456/289067/fansly',
             ],
         )
 
     def test_creator_url_parses_service_and_creator_for_api(self):
         self.assertEqual(
-            parse_creator_identity('https://coomerfans.com/u/creator/service'),
-            ('service', None, 'creator'),
+            parse_creator_identity('https://coomerfans.com/u/fansly/289067/creator'),
+            ('fansly', '289067', 'creator'),
         )
+        self.assertEqual(
+            parse_creator_identity('https://coomerfans.com/p/91822068/289067/fansly'),
+            ('fansly', '289067', '289067'),
+        )
+
+    def test_coomerfans_post_route_uses_post_id_and_creator_for_api(self):
+        post = {
+            'title': 'A video',
+            'published': '2026-01-02',
+            'file': {'path': 'video.mp4'},
+            'attachments': [],
+        }
+
+        with patch(
+            'coomerscraper.coom.fetch_html',
+            return_value='<video src="/data/video.mp4"></video>',
+        ):
+            with patch(
+                'coomerscraper.coom.api_fetch_post_single',
+                return_value={'post': post},
+            ) as fetch_post:
+                urls = process_post(
+                    'https://coomerfans.com/p/91822068/289067/fansly',
+                    skip_img=False,
+                    skip_vid=False,
+                )
+
+        fetch_post.assert_called_once_with(
+            'https://coomerfans.com', 'fansly', '289067', '91822068'
+        )
+        self.assertTrue(any(url.name.endswith('.mp4') for url in urls))
 
 
 if __name__ == '__main__':

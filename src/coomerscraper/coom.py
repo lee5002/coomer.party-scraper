@@ -87,9 +87,13 @@ def parse_post_urls_from_html(url: str, html: str) -> List[str]:
         )
         post_service, post_creator_id, post_creator = parse_creator_identity(candidate)
         post_creator_key = post_creator_id or post_creator
+        post_segments = [segment for segment in post.path.split('/') if segment]
+        is_post_route = (
+            (len(post_segments) >= 4 and post_segments[0] == 'p')
+            or (len(post_segments) >= 5 and post_segments[-2] == 'post')
+        )
         is_creator_post = (
-            len(post.path.strip('/').split('/')) >= 5
-            and post.path.strip('/').split('/')[-2] == 'post'
+            is_post_route
             and post_service == service
             and post_creator_key == creator_key
         )
@@ -112,7 +116,12 @@ def parse_creator_identity(url: str) -> Tuple[str, Optional[str], str]:
     if segments[0] == 'u' and len(segments) >= 3:
         if len(segments) >= 5 and segments[3] == 'post':
             return segments[1], None, segments[2]
-        return segments[2], None, segments[1]
+        if len(segments) >= 4:
+            return segments[1], segments[2], segments[3]
+        return segments[1], None, segments[2]
+
+    if segments[0] == 'p' and len(segments) >= 4:
+        return segments[3], segments[2], segments[2]
 
     if len(segments) >= 3 and segments[-2] == 'user':
         return segments[-3], None, segments[-1]
@@ -265,7 +274,7 @@ def process_post( url: str
     path = urlparse(resolved_url).path
     segments = [segment for segment in path.split('/') if segment]
     service, creator_id, creator = parse_creator_identity(resolved_url)
-    post_id = segments[-1]
+    post_id = segments[1] if segments[0] == 'p' else segments[-1]
     creator_key = creator_id or creator
 
     html_urls = []
@@ -453,7 +462,10 @@ def main( urls: List[str]
         creator_key = creator_id or creator
 
         # Fetch URLs to download media from a post
-        if len(path_segments) >= 2 and path_segments[-2] == 'post':
+        if (
+            len(path_segments) >= 2
+            and (path_segments[0] == 'p' or path_segments[-2] == 'post')
+        ):
             logger.debug('URL is suspected to be a post')
             if offsets[0] is not None or offsets[1] is not None:
                 logger.warning('Start and end offsets are ignored when downloading a post')
