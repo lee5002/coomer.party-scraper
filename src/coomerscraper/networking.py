@@ -9,6 +9,7 @@ from pathlib import Path
 from random import randrange
 from tqdm import tqdm
 from typing import List, Optional
+from urllib.parse import urlparse
 
 
 IMG_EXTS = [ 'jpg', 'jpeg', 'png', 'gif', 'webp' ]
@@ -18,6 +19,10 @@ THROTTLE_TIME = 30
 CHUNK_SIZE = 10 * 1024
 
 logger = logging.getLogger(__name__)
+
+
+def media_extension(url: str) -> str:
+    return Path(urlparse(url).path).suffix.lower().lstrip('.')
 
 
 """
@@ -221,7 +226,7 @@ def multithread_download( urls: List[NamedUrl]
         def submit_next(slot: int) -> bool:
             try:
                 next_url = next(url_iter)
-                dst = (dst_pics if next_url.url.split('.')[-1] in IMG_EXTS else dst_vids) / next_url.name
+                dst = (dst_pics if media_extension(next_url.url) in IMG_EXTS else dst_vids) / next_url.name
                 pool.submit(_download, next_url, dst, slot, q, retries)
                 return True
             except StopIteration:

@@ -9,7 +9,7 @@ from urllib.parse import quote_plus, urljoin, urlparse
 import requests
 
 from .networking import ( api_fetch_post_multi, api_fetch_post_single, api_fetch_creator_profile
-                        , multithread_download, NamedUrl, IMG_EXTS, VID_EXTS )
+                        , multithread_download, NamedUrl, IMG_EXTS, VID_EXTS, media_extension )
 from .utils import base_url, compute_file_hashes, create_folder_tree, round_offsets, to_camel
 
 
@@ -41,11 +41,11 @@ def parse_media_urls_from_html(url: str) -> List[NamedUrl]:
 
         if 'coomerfans.com' not in candidate.lower() and 'coomerfans.com' not in url.lower():
             continue
-        if '/storage/' not in candidate.lower() and '/istorage/' not in candidate.lower():
+        if not any(path in candidate.lower() for path in ('/storage/', '/istorage/', '/data/')):
             continue
 
         media_path = urlparse(candidate).path
-        ext = Path(media_path).suffix.lower().lstrip('.')
+        ext = media_extension(candidate)
         if ext not in IMG_EXTS and ext not in VID_EXTS:
             continue
         if candidate in seen:
@@ -154,7 +154,7 @@ def parse_posts_json( base: str
         title = to_camel(re.sub(r'[^A-Za-z0-9\s]+', '', post['title']))
         datetime = re.sub('-|:', '', post['published'])
         if 'path' in post['file']:
-            ext = post['file']['path'].split('.')[-1]
+            ext = media_extension(post['file']['path'])
             if skip_vid and ext in VID_EXTS:
                 continue
             if skip_img and ext in IMG_EXTS:
@@ -164,7 +164,7 @@ def parse_posts_json( base: str
             named_urls.append(NamedUrl(url, name))
 
         for i, attachment in enumerate(post['attachments']):
-            ext = attachment['path'].split('.')[-1]
+            ext = media_extension(attachment['path'])
             if skip_vid and ext in VID_EXTS:
                 continue
             if skip_img and ext in IMG_EXTS:
@@ -186,14 +186,11 @@ Returns a single-element list of NamedUrl for the pre-fetched media.
 def process_prefetched( url: str
                       , skip_img: bool
                       , skip_vid: bool ) -> List[NamedUrl]:
-    # Further sanitize the URL
-    url = url.split('?')[0]
-
     # Use the hash as the name
-    name = url.split('/')[-1]
+    name = Path(urlparse(url).path).name
 
     # Ensure it shouldn't be skipped (for some reason)
-    ext = name.split('.')[-1]
+    ext = media_extension(url)
     if (ext in IMG_EXTS and skip_img) or (ext in VID_EXTS and skip_vid):
         return []
 
@@ -223,7 +220,7 @@ def process_post( url: str
     if 'coomerfans.com' in base:
         named_urls = parse_media_urls_from_html(resolved_url)
         if named_urls:
-            return [nu for nu in named_urls if not ((nu.url.split('.')[-1].lower() in IMG_EXTS and skip_img) or (nu.url.split('.')[-1].lower() in VID_EXTS and skip_vid))]
+            return [nu for nu in named_urls if not ((media_extension(nu.url) in IMG_EXTS and skip_img) or (media_extension(nu.url) in VID_EXTS and skip_vid))]
 
     # coomer.st still exposes the original API interface; use it directly.
     if 'coomer.st' in base:
@@ -268,7 +265,7 @@ def process_page( url: str
     if 'coomerfans.com' in base:
         named_urls = parse_media_urls_from_html(resolved_url)
         if named_urls:
-            return [nu for nu in named_urls if not ((nu.url.split('.')[-1].lower() in IMG_EXTS and skip_img) or (nu.url.split('.')[-1].lower() in VID_EXTS and skip_vid))]
+            return [nu for nu in named_urls if not ((media_extension(nu.url) in IMG_EXTS and skip_img) or (media_extension(nu.url) in VID_EXTS and skip_vid))]
 
     # coomer.st still exposes the original API interface; use it directly.
     if 'coomer.st' in base:

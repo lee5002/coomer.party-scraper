@@ -4,10 +4,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from coomerscraper.networking import NamedUrl, _download
+from coomerscraper.networking import NamedUrl, _download, media_extension
 
 
 class DownloadTests(unittest.TestCase):
+    def test_media_extension_ignores_signed_query_string(self):
+        self.assertEqual(
+            media_extension('https://img10.coomerfans.com/storage/video.MP4?e=1&hash=signature'),
+            'mp4',
+        )
+
     def test_video_download_accepts_media_and_allows_slow_streams(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             destination = Path(temp_dir) / 'video.mp4'
