@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.15](https://github.com/lee5002/coomer.party-scraper/compare/v4.1.14...v4.1.15) (2026-10-31)
+
+
+### Bug Fixes
+
+* log existing file hashing progress ([#33](https://github.com/lee5002/coomer.party-scraper/issues/33)) ([58d7a87](https://github.com/lee5002/coomer.party-scraper/commit/58d7a871d1267d8030af07fd6824634e719fd7fb))
+
 ## [4.1.14](https://github.com/lee5002/coomer.party-scraper/compare/v4.1.13...v4.1.14) (2026-10-31)
 
 
