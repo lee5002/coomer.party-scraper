@@ -1,7 +1,16 @@
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from coomerscraper.coom import parse_media_urls_from_html, process_prefetched
+from coomerscraper.coom import (
+    main,
+    parse_media_urls_from_html,
+    parse_post_urls_from_html,
+    process_post,
+    process_page,
+    process_prefetched,
+)
 
 
 class ParseMediaUrlsTests(unittest.TestCase):
@@ -50,6 +59,139 @@ class ParseMediaUrlsTests(unittest.TestCase):
         self.assertEqual(
             named_urls[0].name,
             '2892ac-0199dde8-7128-7319-aa86-d2b677d072c3.mp4',
+        )
+
+    def test_creator_page_follows_post_links_to_find_videos(self):
+        creator_url = 'https://coomerfans.com/u/service/creator'
+        post_url = f'{creator_url}/123'
+        page_html = (
+            '<img src="/storage/preview.jpg">'
+            f'<a href="{post_url}">View post</a>'
+        )
+        post_html = '<video src="/data/video.mp4?hash=signature"></video>'
+
+        with patch(
+            'coomerscraper.coom.fetch_html',
+            side_effect=[page_html, post_html],
+        ):
+            with patch('coomerscraper.coom.api_fetch_post_multi', return_value=[]):
+                named_urls = process_page(
+                    creator_url,
+                    skip_img=False,
+                    skip_vid=False,
+                    offsets=(None, None),
+                )
+
+        self.assertEqual(
+            [url.name for url in named_urls],
+            ['preview.jpg', 'video.mp4'],
+        )
+        self.assertEqual(
+            named_urls[1].url,
+            'https://coomerfans.com/data/video.mp4?hash=signature',
+        )
+
+    def test_creator_page_api_videos_are_not_hidden_by_preview_images(self):
+        creator_url = 'https://coomerfans.com/u/service/creator'
+        post = {
+            'title': 'A video',
+            'published': '2026-01-02',
+            'file': {'path': 'video.mp4'},
+            'attachments': [],
+        }
+
+        with patch(
+            'coomerscraper.coom.fetch_html',
+            return_value='<img src="/storage/preview.jpg">',
+        ):
+            with patch(
+                'coomerscraper.coom.api_fetch_post_multi',
+                return_value=[post],
+            ):
+                named_urls = process_page(
+                    creator_url,
+                    skip_img=False,
+                    skip_vid=False,
+                    offsets=(None, None),
+                )
+
+        self.assertEqual(
+            [url.name for url in named_urls],
+            ['preview.jpg', '20260102-AVideo_0.mp4'],
+        )
+
+    def test_post_api_videos_are_not_hidden_by_preview_images(self):
+        post_url = 'https://coomerfans.com/service/user/creator/post/123'
+        post = {
+            'title': 'A video',
+            'published': '2026-01-02',
+            'file': {'path': 'video.mp4'},
+            'attachments': [],
+        }
+
+        with patch(
+            'coomerscraper.coom.fetch_html',
+            return_value='<img src="/storage/preview.jpg">',
+        ):
+            with patch(
+                'coomerscraper.coom.api_fetch_post_single',
+                return_value={'post': post},
+            ):
+                named_urls = process_post(
+                    post_url,
+                    skip_img=False,
+                    skip_vid=False,
+                )
+
+        self.assertEqual(
+            [url.name for url in named_urls],
+            ['preview.jpg', '20260102-AVideo_0.mp4'],
+        )
+
+    def test_creator_page_video_is_submitted_to_download_queue(self):
+        creator_url = 'https://coomerfans.com/u/service/creator'
+        post_url = f'{creator_url}/123'
+        page_html = f'<a href="{post_url}">View post</a>'
+        post_html = '<video src="/data/video.mp4?hash=signature"></video>'
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch(
+                'coomerscraper.coom.fetch_html',
+                side_effect=[page_html, post_html],
+            ):
+                with patch('coomerscraper.coom.api_fetch_post_multi', return_value=[]):
+                    with patch('coomerscraper.coom.get_creator_name', return_value='creator_service'):
+                        with patch('coomerscraper.coom.multithread_download') as download:
+                            main(
+                                [creator_url],
+                                Path(temp_dir),
+                                skip_img=False,
+                                skip_vid=False,
+                                offsets=(None, None),
+                                dump_urls=False,
+                                jobs=1,
+                                retries=1,
+                            )
+
+        queued_urls = download.call_args.args[0]
+        self.assertEqual(len(queued_urls), 1)
+        self.assertEqual(
+            queued_urls[0].url,
+            'https://coomerfans.com/data/video.mp4?hash=signature',
+        )
+
+    def test_post_urls_support_both_creator_page_route_formats(self):
+        creator_url = 'https://coomerfans.com/u/service/creator'
+        html = (
+            f'<a href="{creator_url}/123">Post</a>'
+            f'<a href="{creator_url}/post/456">Another post</a>'
+        )
+
+        post_urls = parse_post_urls_from_html(creator_url, html)
+
+        self.assertEqual(
+            post_urls,
+            [f'{creator_url}/123', f'{creator_url}/post/456'],
         )
 
 
