@@ -1,5 +1,6 @@
 import logging
 import re
+from html import unescape
 from pathlib import Path
 from sys import maxsize
 from typing import List, Optional, Tuple
@@ -30,6 +31,7 @@ def parse_media_urls_from_html(url: str) -> List[NamedUrl]:
     for candidate in re.findall(r'(?:src|href|data-src|poster)=["\']([^"\']+)["\']', res.text, flags=re.I):
         if not candidate:
             continue
+        candidate = unescape(candidate)
         if candidate.startswith('//'):
             candidate = 'https:' + candidate
         elif candidate.startswith('/'):
@@ -37,19 +39,19 @@ def parse_media_urls_from_html(url: str) -> List[NamedUrl]:
         elif '://' not in candidate:
             candidate = 'https://coomerfans.com/' + candidate.lstrip('/')
 
-        candidate = candidate.split('?', 1)[0]
         if 'coomerfans.com' not in candidate.lower() and 'coomerfans.com' not in url.lower():
             continue
         if '/storage/' not in candidate.lower() and '/istorage/' not in candidate.lower():
             continue
 
-        ext = Path(candidate).suffix.lower().lstrip('.')
+        media_path = urlparse(candidate).path
+        ext = Path(media_path).suffix.lower().lstrip('.')
         if ext not in IMG_EXTS and ext not in VID_EXTS:
             continue
         if candidate in seen:
             continue
         seen.add(candidate)
-        named_urls.append(NamedUrl(candidate, Path(candidate).name))
+        named_urls.append(NamedUrl(candidate, Path(media_path).name))
     return named_urls
 
 
