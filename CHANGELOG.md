@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.13](https://github.com/lee5002/coomer.party-scraper/compare/v4.1.12...v4.1.13) (2026-10-31)
+
+
+### Bug Fixes
+
+* use creator names in download folders ([96babf6](https://github.com/lee5002/coomer.party-scraper/commit/96babf6e0ed1f277dad8afe0c5614a7e9b542014))
+
 ## [4.1.12](https://github.com/lee5002/coomer.party-scraper/compare/v4.1.11...v4.1.12) (2026-10-31)
 
 
