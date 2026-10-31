@@ -64,6 +64,22 @@ class ParseMediaUrlsTests(unittest.TestCase):
             [2, 4, 8],
         )
 
+    def test_fetch_html_uses_configured_retry_count(self):
+        unavailable = requests.Response()
+        unavailable.status_code = 503
+        unavailable.url = 'https://coomerfans.com/test'
+        unavailable.headers['Retry-After'] = '0'
+
+        with patch(
+            'coomerscraper.coom.requests.get',
+            return_value=unavailable,
+        ) as get:
+            with patch('coomerscraper.coom.time.sleep'):
+                with self.assertRaises(HtmlFetchError):
+                    fetch_html('https://coomerfans.com/test', retries=2)
+
+        self.assertEqual(get.call_count, 3)
+
     def test_creator_scan_stops_after_exhausted_transient_post_error(self):
         creator_url = 'https://coomerfans.com/u/fansly/289067/creator'
         first_post_url = 'https://coomerfans.com/p/123/289067/fansly'
@@ -89,10 +105,14 @@ class ParseMediaUrlsTests(unittest.TestCase):
                 skip_img=False,
                 skip_vid=False,
                 offsets=(None, None),
+                retries=16,
             )
 
         self.assertEqual([url.name for url in named_urls], ['first.jpg'])
         self.assertEqual(fetch.call_count, 3)
+        self.assertTrue(
+            all(call.kwargs['retries'] == 16 for call in fetch.call_args_list)
+        )
 
     def test_prefetched_video_keeps_signed_query_string(self):
         media_url = 'https://coomerfans.com/data/video.mp4?e=1&hash=signature'
