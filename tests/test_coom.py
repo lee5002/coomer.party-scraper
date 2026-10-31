@@ -24,6 +24,48 @@ from coomerscraper.utils import base_url, sanitize_url
 
 
 class ParseMediaUrlsTests(unittest.TestCase):
+    def test_existing_file_hashing_is_logged_before_hashes_are_computed(self):
+        events = []
+
+        def log_info(message):
+            events.append(('log', message))
+
+        def compute_hashes(dst):
+            events.append(('hash', dst))
+            return {}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch(
+                'coomerscraper.coom.logger.info',
+                side_effect=log_info,
+            ):
+                with patch(
+                    'coomerscraper.coom.compute_file_hash_map',
+                    side_effect=compute_hashes,
+                ):
+                    with patch('coomerscraper.coom.multithread_download'):
+                        main(
+                            ['https://coomerfans.com/storage/media.jpg'],
+                            Path(temp_dir),
+                            skip_img=False,
+                            skip_vid=False,
+                            offsets=(None, None),
+                            dump_urls=False,
+                            jobs=1,
+                            retries=1,
+                        )
+
+        hashing_log_index = next(
+            index
+            for index, event in enumerate(events)
+            if event[0] == 'log'
+            and event[1].startswith('Computing SHA-256 hashes')
+        )
+        hash_computation_index = next(
+            index for index, event in enumerate(events) if event[0] == 'hash'
+        )
+        self.assertLess(hashing_log_index, hash_computation_index)
+
     def test_fetch_html_retries_service_unavailable_after_retry_after(self):
         unavailable = requests.Response()
         unavailable.status_code = 503

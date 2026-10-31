@@ -678,8 +678,8 @@ def main( urls: List[str]
         # Remove URLs of files that already exist
         dst_root = dst / user
         if hashes is None:
+            logger.info(f'Computing SHA-256 hashes of existing files in {dst}')
             hashes = compute_file_hash_map(dst)
-        logger.info(f'Checking existing file hashes in {dst}')
         named_urls = purge_duplicate_urls(dst_root, named_urls, hashes)
         logger.info(f'New number of media files to download is {len(named_urls)}')
 
